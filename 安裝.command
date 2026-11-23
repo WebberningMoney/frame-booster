@@ -2,7 +2,7 @@
 # 安裝.command — 雙擊這個檔案就會：
 #   1. 檢查這台 Mac 能不能用（Apple 晶片＋macOS 15.4 以上）
 #   2. 把原始碼編譯成程式（scripts/build.sh）
-#   3. 用測試影片實際轉成 120、60、144 FPS，確認結果正確（scripts/selftest.sh）
+#   3. 用測試影片實際轉成 60、120、144 FPS（以及 120 FPS 快速），確認結果正確（scripts/selftest.sh）
 #   4. 測試通過才把 FrameBooster 放進「應用程式」資料夾，並打開它
 # 過程會記錄在 build/install_log.txt，出問題時可以把它提供給開發者。
 # 更新到新版時，再雙擊一次即可（會取代舊版的 App；你轉好的影片不受影響）。
@@ -28,7 +28,7 @@ echo "macOS $(sw_vers -productVersion)（$(uname -m)）"
 [ "$(uname -m)" = "arm64" ] || fail "需要 Apple 晶片（M1 以後）的 Mac。Intel Mac 沒有 Apple 的 AI 補幀功能。"
 ver=$(sw_vers -productVersion)
 lowest=$(printf '%s\n%s\n' "15.4" "$ver" | sort -V | head -1)
-[ "$lowest" = "15.4" ] || fail "需要 macOS 15.4 以上（你的是 $ver）。請先到「系統設定 → 一般 → 軟體更新」更新。"
+[ "$lowest" = "15.4" ] || fail "需要 macOS 15.4 以上（你的是 ${ver}）。請先到「系統設定 → 一般 → 軟體更新」更新。"
 
 # ---- 2. 編譯 ----
 echo ""
@@ -36,7 +36,7 @@ bash scripts/build.sh || fail "編譯失敗。請把上面的錯誤訊息（或�
 
 # ---- 3. 自我測試 ----
 echo ""
-echo "▶ 用測試影片實際轉換三次（120、60、144 FPS），確認結果正確..."
+echo "▶ 用測試影片實際轉換四次（60、120、144 FPS，以及 120 FPS 快速），確認結果正確..."
 bash scripts/selftest.sh || fail "自我測試沒有通過，所以沒有安裝。請把安裝紀錄提供給開發者。"
 
 # ---- 4. 放進「應用程式」 ----
@@ -48,7 +48,7 @@ fi
 TARGET="$DEST/FrameBooster.app"
 pkill -x FrameBooster 2>/dev/null && sleep 1
 rm -rf "$TARGET"
-ditto --norsrc --noextattr build/FrameBooster.app "$TARGET" || fail "無法複製到 $DEST。"
+ditto --norsrc --noextattr build/FrameBooster.app "$TARGET" || fail "無法複製到 ${DEST}。"
 
 echo ""
 echo "✅ 安裝完成！FrameBooster 已放在：$TARGET"

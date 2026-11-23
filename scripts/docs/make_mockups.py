@@ -66,6 +66,10 @@ body { margin: 0; padding: 28px; display: inline-block; background: #d9dde3; fon
 .tip { position: absolute; background: #fbfbfb; border: .5px solid #bdbdbd; box-shadow: 0 4px 12px rgba(0,0,0,.18);
        font-size: 11.5px; line-height: 1.55; color: #222; padding: 7px 10px; width: 380px; border-radius: 4px; z-index: 6; white-space: pre-line; }
 .cursor { position: absolute; z-index: 7; }
+.muted { color: #86868b; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disc { color: #1d1d1f; } .tri { color: #6e6e73; font-size: 11px; width: 10px; display: inline-block; }
+.adv { display: flex; flex-direction: column; gap: 10px; padding-left: 22px; }
+.lbl { width: 64px; display: inline-block; }
 """
 
 FILM_ICON = """<svg class="icon" viewBox="0 0 40 34"><g fill="none" stroke="{c}" stroke-width="2.2" stroke-linejoin="round">
@@ -75,7 +79,7 @@ FILM_ICON = """<svg class="icon" viewBox="0 0 40 34"><g fill="none" stroke="{c}"
 CURSOR = """<svg class="cursor" style="left:{x}px;top:{y}px" width="16" height="22" viewBox="0 0 16 22">
 <path d="M1 1v17l4.5-4.2 3 6.7 2.6-1.2-3-6.5H14z" fill="#000" stroke="#fff" stroke-width="1.2"/></svg>"""
 
-def window(inner, overlay="", drop_active=False):
+def window(inner, overlay="", drop_active=False, advanced=False, outdir=None):
     c = "#0a84ff" if drop_active else "#8e8e93"
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>
 <div class="win" id="win">
@@ -86,12 +90,20 @@ def window(inner, overlay="", drop_active=False):
       <h3>把影片拖到這裡</h3><p>把 30 FPS 的影片補成 60～240 FPS，在高更新率的螢幕上看起來更順</p>
       <span class="btn" style="margin-top:3px">選擇影片…</span></div>
     <div class="row">目標幀率 <span class="popup" id="popup">120 FPS — iPhone 17／Pro、iPad Pro、MacBook Pro <span class="chev">⌃<br>⌄</span></span></div>
-    <div class="row"><span class="seg"><span class="on">品質優先</span><span>速度優先</span></span><span class="spacer"></span>
+    <div class="row">輸出位置 <span class="muted">{outdir or "原影片旁邊"}</span> <span class="btn">選擇資料夾…</span>{' <span class="btn">改回原影片旁邊</span>' if outdir else ''}</div>
+    <div class="row disc"><span class="tri">{'▾' if advanced else '▸'}</span> 進階設定</div>
+    {ADV if advanced else ''}
+    <div class="row"><span class="spacer"></span>
       <span class="btn {'disabled' if 'job' not in inner else ''}">取消全部</span><span class="btn">清除已完成</span></div>
     {inner}
   </div>
   {overlay}
 </div></body></html>"""
+
+ADV = """<div class="adv">
+  <div class="row"><span class="lbl">補幀方式</span><span class="seg"><span class="on">精細</span><span>快速</span></span></div>
+  <div class="row"><span class="lbl">輸出畫質</span><span class="seg"><span>高</span><span class="on">標準</span><span>省空間</span></span></div>
+</div>"""
 
 EMPTY = '<div class="hint">轉好的影片會放在原影片旁邊，檔名加上「_120fps」。</div>'
 
@@ -118,13 +130,17 @@ jobs = """<div class="list">
  <div class="job"><div class="st" style="color:#34c759">✔</div><div class="main"><div class="name">旅行_台南.mov</div>
    <div class="sub">完成（48 秒）→ 旅行_台南_120fps.mov</div></div><span class="btn">在 Finder 中顯示</span></div>
  <div class="job"><div class="st"><span class="spin"></span></div><div class="main"><div class="name">家人聚餐.mp4</div>
-   <div class="bar"><i style="width:45%"></i></div><div class="sub">45%　→ 120 FPS・品質優先</div></div></div>
+   <div class="bar"><i style="width:45%"></i></div><div class="sub">45%・剩餘約 12 秒　→ 120 FPS・精細・標準畫質</div></div></div>
  <div class="job"><div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">家人聚餐.mp4</div>
-   <div class="sub">等待中　→ 60 FPS・品質優先</div></div></div>
+   <div class="sub">等待中　→ 60 FPS・精細・省空間畫質</div></div></div>
  <div class="job"><div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_120fps.mov</div>
    <div class="sub">略過：這支影片已經是 120 FPS，不需要轉成 60 FPS。</div></div></div>
 </div>"""
 pages["converting"] = window(jobs)
+adv_tip = ("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。"
+           "標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。改了只影響之後加入的影片。")
+pages["advanced"] = window('<div class="hint"></div>', advanced=True, outdir="~/Movies/120fps 影片",
+    overlay=f'<div class="tip" style="left:300px;top:300px;width:300px">{adv_tip}</div>' + CURSOR.format(x=270, y=380))
 
 # Concept figure: how frames are added (30 → 120)
 FRAMES = """<!doctype html><html><head><meta charset="utf-8"><style>

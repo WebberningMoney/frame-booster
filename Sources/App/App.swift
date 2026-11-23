@@ -1,11 +1,14 @@
 // App.swift — FrameBooster 的視窗程式（把影片拖進來就開始轉）。
 //
 // 白話說明：
-//   - 先在下拉選單選「目標幀率」（60／120／144／240，預設 120）和「品質／速度優先」，再拖影片進來。
-//     這兩個設定在影片「加入時」就記下來，之後改設定只影響新加入的影片
+//   - 先選「目標幀率」（60／120／144／240，預設 120）和「輸出位置」（預設原影片旁邊），再拖影片進來。
+//     「進階設定」裡還有「補幀方式」（精細／快速）和「輸出畫質」（高／標準／省空間）。
+//     這些設定在影片「加入時」就記下來，之後改設定只影響新加入的影片
 //     （所以可以把同一支影片先用 120、再用 60 各轉一次）。
+//   - 「輸出位置」選過的資料夾會記住（存在 App 的偏好設定裡），下次打開還在。
 //   - 一次只轉一支，其他的排隊等（同時轉好幾支反而會更慢）。
-//   - 轉好的檔案放在原影片旁邊，檔名加上「_120fps」之類的字。原影片不會被修改。
+//   - 轉好的檔案放在原影片旁邊（或選定的資料夾），檔名加上「_120fps」之類的字。原影片不會被修改。
+//   - 轉檔中會顯示百分比和預估剩餘時間。
 //   - 影片原本就已經是目標幀率以上時，顯示「略過」，不會轉。
 //   - 實際轉檔都在 Converter.swift；選項與裝置清單在 FPSPresets.swift；這裡只負責畫面和排隊。
 
@@ -22,7 +25,7 @@ struct FrameBoosterApp: App {
         WindowGroup("FrameBooster") {
             ContentView()
                 .environmentObject(queue)
-                .frame(minWidth: 600, minHeight: 480)
+                .frame(minWidth: 640, minHeight: 560)
         }
     }
 }
@@ -43,17 +46,30 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     enum Status: Equatable { case waiting, running, done, skipped(String), failed(String), cancelled }
     let id = UUID()
     let input: URL
-    let targetFPS: Int32       // 加入時選的目標幀率
-    let highQuality: Bool      // 加入時選的品質／速度
+    let targetFPS: Int32              // 加入時選的目標幀率
+    let highQuality: Bool             // 加入時選的補幀方式（true＝精細）
+    let outputQuality: OutputQuality  // 加入時選的輸出畫質
+    let outputDirectory: URL?         // 加入時選的輸出資料夾（nil＝原影片旁邊）
     @Published var progress: Double = 0
+    @Published var remaining: Double?  // 預估還要幾秒；剛開始算不準時是 nil
     @Published var status: Status = .waiting
     @Published var output: URL?
     @Published var seconds: Double = 0
-    init(input: URL, targetFPS: Int32, highQuality: Bool) {
+    init(input: URL, targetFPS: Int32, highQuality: Bool, outputQuality: OutputQuality, outputDirectory: URL?) {
         self.input = input; self.targetFPS = targetFPS; self.highQuality = highQuality
+        self.outputQuality = outputQuality; self.outputDirectory = outputDirectory
     }
-    /// 例如「→ 120 FPS・品質優先」
-    var settingsText: String { "→ \(targetFPS) FPS・\(highQuality ? "品質優先" : "速度優先")" }
+    /// 例如「→ 120 FPS・精細・標準畫質」（有選輸出資料夾時加上「・存到 影片輸出」）
+    var settingsText: String {
+        var t = "→ \(targetFPS) FPS・\(highQuality ? "精細" : "快速")・\(outputQuality.displayName)畫質"
+        if let dir = outputDirectory { t += "・存到「\(dir.lastPathComponent)」" }
+        return t
+    }
+    /// 例如「約 12 秒」「約 3 分 5 秒」
+    static func formatRemaining(_ seconds: Double) -> String {
+        let t = max(Int(seconds.rounded()), 0)
+        return t < 60 ? "約 \(t) 秒" : "約 \(t / 60) 分 \(t % 60) 秒"
+    }
 }
 
 @MainActor
@@ -62,12 +78,32 @@ final class JobQueue: ObservableObject {
     @Published var jobs: [Job] = []
     @Published var highQuality = true
     @Published var targetFPS: Int32 = FPSPreset.defaultFPS
+    @Published var outputQuality: OutputQuality = .standard
+    @Published var showAdvanced = false
+    /// 輸出資料夾（nil＝原影片旁邊）。改了就存進 App 的偏好設定，下次打開還在。
+    @Published var outputDirectory: URL? {
+        didSet { UserDefaults.standard.set(outputDirectory?.path, forKey: Self.outputDirectoryKey) }
+    }
     @Published private(set) var isRunning = false
     private var current: FrameRateConverter?
+    private static let outputDirectoryKey = "outputDirectory"
+
+    init() {
+        // 讀回上次選的輸出資料夾；資料夾已經不存在就改回「原影片旁邊」
+        if let path = UserDefaults.standard.string(forKey: Self.outputDirectoryKey) {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                outputDirectory = URL(fileURLWithPath: path, isDirectory: true)
+            }
+        }
+    }
 
     func add(_ urls: [URL]) {
         let videos = urls.flatMap { Self.expand($0) }
-        jobs.append(contentsOf: videos.map { Job(input: $0, targetFPS: targetFPS, highQuality: highQuality) })
+        jobs.append(contentsOf: videos.map {
+            Job(input: $0, targetFPS: targetFPS, highQuality: highQuality,
+                outputQuality: outputQuality, outputDirectory: outputDirectory)
+        })
         startNext()
     }
 
@@ -90,12 +126,17 @@ final class JobQueue: ObservableObject {
         var opts = ConvertOptions()
         opts.targetFPS = job.targetFPS
         opts.highQuality = job.highQuality
+        opts.outputQuality = job.outputQuality
+        opts.outputDirectory = job.outputDirectory
         let conv = FrameRateConverter(input: job.input, options: opts)
         current = conv
-        conv.progressHandler = { p in
-            DispatchQueue.main.async { job.progress = p }
-        }
         let start = Date()
+        conv.progressHandler = { p in
+            // 預估剩餘時間＝已花時間 ÷ 進度 − 已花時間。剛開始（不到 3% 或 2 秒）太不準，先不顯示。
+            let elapsed = Date().timeIntervalSince(start)
+            let remaining: Double? = (p > 0.03 && elapsed > 2) ? elapsed / p - elapsed : nil
+            DispatchQueue.main.async { job.progress = p; job.remaining = remaining }
+        }
         Task.detached {
             do {
                 let out = try await conv.run()
@@ -163,21 +204,57 @@ struct ContentView: View {
                 .help(FPSPreset.preset(for: queue.targetFPS).fullDevices)
                 Spacer()
             }
-            HStack {
-                Picker("", selection: $queue.highQuality) {
-                    Text("品質優先").tag(true)
-                    Text("速度優先").tag(false)
+            HStack(spacing: 8) {
+                Text("輸出位置")
+                Text(queue.outputDirectory.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? "原影片旁邊")
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                    .help(queue.outputDirectory?.path ?? "轉好的影片放在原影片所在的資料夾")
+                Button("選擇資料夾…") { pickOutputFolder() }
+                    .help("把轉好的影片統一放到某個資料夾。選過的資料夾會記住，下次打開還在。")
+                if queue.outputDirectory != nil {
+                    Button("改回原影片旁邊") { queue.outputDirectory = nil }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 200)
-                .help("品質優先：補出來的畫面比較自然，但比較慢。速度優先：比較快，但動作很快的畫面可能比較糊。改了只影響之後加入的影片。")
+                Spacer()
+            }
+            DisclosureGroup("進階設定", isExpanded: $queue.showAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text("補幀方式").frame(width: 64, alignment: .leading)
+                        Picker("補幀方式", selection: $queue.highQuality) {
+                            Text("精細").tag(true)
+                            Text("快速").tag(false)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+                        .help("Apple 補幀引擎的設定。精細（預設）：引擎以畫面品質為優先，補出來的畫面通常比較自然，但比較慢。快速：引擎以速度為優先。Apple 沒有公開兩者內部的差別，也沒有其他參數可以調。改了只影響之後加入的影片。")
+                        Spacer()
+                    }
+                    HStack(spacing: 8) {
+                        Text("輸出畫質").frame(width: 64, alignment: .leading)
+                        Picker("輸出畫質", selection: $queue.outputQuality) {
+                            ForEach(OutputQuality.allCases) { q in Text(q.displayName).tag(q) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 240)
+                        .help("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。改了只影響之後加入的影片。")
+                        Spacer()
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.leading, 4)
+            }
+            HStack {
                 Spacer()
                 Button("取消全部") { queue.cancelAll() }.disabled(!queue.isRunning)
                 Button("清除已完成") { queue.clearFinished() }
             }
             if queue.jobs.isEmpty {
                 Spacer()
-                Text("轉好的影片會放在原影片旁邊，檔名加上「_\(queue.targetFPS)fps」。")
+                Text(queue.outputDirectory.map { "轉好的影片會放在「\($0.lastPathComponent)」資料夾，檔名加上「_\(queue.targetFPS)fps」。" }
+                     ?? "轉好的影片會放在原影片旁邊，檔名加上「_\(queue.targetFPS)fps」。")
                     .foregroundStyle(.secondary)
                 Spacer()
             } else {
@@ -220,6 +297,17 @@ struct ContentView: View {
         }
     }
 
+    private func pickOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "選擇"
+        panel.message = "選擇轉好的影片要放在哪個資料夾"
+        if panel.runModal() == .OK, let url = panel.url { queue.outputDirectory = url }
+    }
+
     private func pickFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -243,8 +331,10 @@ struct JobRow: View {
                     Text("等待中　\(job.settingsText)").font(.caption).foregroundStyle(.secondary)
                 case .running:
                     ProgressView(value: job.progress)
-                    Text(String(format: "%.0f%%　%@", job.progress * 100, job.settingsText))
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(String(format: "%.0f%%・%@　%@", job.progress * 100,
+                                job.remaining.map { "剩餘" + Job.formatRemaining($0) } ?? "計算剩餘時間中…",
+                                job.settingsText))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                 case .done:
                     Text(String(format: "完成（%.0f 秒）→ %@", job.seconds, job.output?.lastPathComponent ?? ""))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)

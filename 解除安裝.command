@@ -1,6 +1,6 @@
 #!/bin/bash
 # 解除安裝.command — 從「應用程式」移除 FrameBooster。
-# FrameBooster 不會在電腦其他地方存資料或設定，所以移除 App 就乾淨了。
+# FrameBooster 只在電腦裡存一個小小的偏好設定（你選的輸出資料夾位置），會一起刪除。
 # 你轉好的影片（*_120fps.mov）不會被刪除。
 
 echo "=== 移除 FrameBooster ==="
@@ -27,8 +27,9 @@ fi
 
 pkill -x FrameBooster 2>/dev/null && sleep 1
 for app in "${found[@]}"; do
-    rm -rf "$app" && echo "已移除：$app"
+    rm -rf "$app" && echo "已移除：${app}"
 done
+defaults delete io.github.webberningmoney.framebooster 2>/dev/null && echo "已刪除偏好設定（輸出資料夾的位置）"
 echo ""
 echo "✅ 完成。最後把 frame-booster 資料夾丟到垃圾桶即可。"
 read -r -p "按 Enter 關閉這個視窗…" _

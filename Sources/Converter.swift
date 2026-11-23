@@ -19,13 +19,37 @@ import VideoToolbox
 import CoreVideo
 import CoreMedia
 
+/// 輸出畫質：決定壓縮時「每秒用多少資料量」記錄畫面（位元率），也就是檔案大小。
+/// 和補幀方式（精細／快速）無關：補幀決定「補出來的畫面像不像」，這裡決定「存檔時壓得多狠」。
+enum OutputQuality: String, CaseIterable, Identifiable {
+    case high, standard, compact
+    var id: String { rawValue }
+    /// 畫面上顯示的名字
+    var displayName: String {
+        switch self { case .high: return "高"; case .standard: return "標準"; case .compact: return "省空間" }
+    }
+    /// 乘在「標準」位元率上的倍數
+    var bitrateMultiplier: Double {
+        switch self { case .high: return 1.5; case .standard: return 1.0; case .compact: return 0.6 }
+    }
+    /// 最低位元率（每秒多少 bit），避免原本壓得很小的影片轉完太糊
+    var minimumBitrate: Double {
+        switch self { case .high: return 8_000_000; case .standard: return 6_000_000; case .compact: return 3_000_000 }
+    }
+}
+
 struct ConvertOptions {
     var targetFPS: Int32 = 120
+    /// 補幀方式：true＝精細（Apple 引擎的「品質優先」），false＝快速（「效能優先」）。
     var highQuality: Bool = true
+    /// 輸出畫質（檔案大小）
+    var outputQuality: OutputQuality = .standard
+    /// 輸出資料夾。nil 代表放在原影片旁邊。
+    var outputDirectory: URL? = nil
     /// 兩張原始畫面相隔超過這麼多秒時就不補幀，直接延續前一張
     ///（例如螢幕錄影時畫面停住很久，硬補只會產生怪畫面）。
     var maxInterpolationGap: Double = 0.5
-    /// 輸出檔位置。nil 代表放在原影片旁邊，檔名是「原檔名_120fps.mov」。
+    /// 直接指定輸出檔（命令列的 -o）。nil 代表自動命名：「原檔名_120fps.mov」，放在 outputDirectory 或原影片旁邊。
     var outputURL: URL? = nil
 }
 
@@ -111,8 +135,8 @@ final class FrameRateConverter: @unchecked Sendable {
 
     // MARK: - 輸出檔名（不會覆蓋已存在的檔案，會自動加上 2、3…）
 
-    static func defaultOutputURL(for input: URL, fps: Int32) -> URL {
-        let dir = input.deletingLastPathComponent()
+    static func defaultOutputURL(for input: URL, fps: Int32, in directory: URL? = nil) -> URL {
+        let dir = directory ?? input.deletingLastPathComponent()
         let base = input.deletingPathExtension().lastPathComponent + "_\(fps)fps"
         var url = dir.appendingPathComponent(base).appendingPathExtension("mov")
         var n = 2
@@ -226,10 +250,23 @@ final class FrameRateConverter: @unchecked Sendable {
         guard reader.canAdd(videoOut) else { throw ConvertError("無法解碼這支影片。") }
         reader.add(videoOut)
 
-        // ---- 寫入器：HEVC 壓縮。位元率依「畫面變成幾倍」調整：
-        //      倍數 ÷ 2，最少 1.5 倍（30→60 約 1.5 倍、→120 約 2 倍、→144 約 2.4 倍、→240 約 4 倍）。
-        //      補出來的畫面和前後很像、很好壓縮，所以不需要跟著畫面數等比例增加。 ----
-        let outURL = options.outputURL ?? Self.defaultOutputURL(for: inputURL, fps: fps)
+        // ---- 寫入器：HEVC 壓縮。位元率（＝檔案大小）依兩件事決定：
+        //      1. 畫面變成幾倍：倍數 ÷ 2，最少 1.5 倍（30→60 約 1.5 倍、→120 約 2 倍、→144 約 2.4 倍、→240 約 4 倍）。
+        //         補出來的畫面和前後很像、很好壓縮，所以不需要跟著畫面數等比例增加。
+        //      2. 輸出畫質：高 ×1.5、標準 ×1、省空間 ×0.6。 ----
+        if let dir = options.outputDirectory {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue,
+                  FileManager.default.isWritableFile(atPath: dir.path) else {
+                throw ConvertError("輸出資料夾不存在或無法寫入：\(dir.path)")
+            }
+        }
+        let outURL = options.outputURL ?? Self.defaultOutputURL(for: inputURL, fps: fps, in: options.outputDirectory)
+        // 安全檢查：絕不覆蓋原影片（例如命令列 -o 不小心指定成原檔）
+        if outURL.standardizedFileURL.resolvingSymlinksInPath() == inputURL.standardizedFileURL.resolvingSymlinksInPath() {
+            throw ConvertError("輸出檔不能和原影片是同一個檔案。")
+        }
+        // 只有命令列明確用 -o 指定檔名時，才會取代同名的舊輸出檔；自動命名一定不會重複。
         if FileManager.default.fileExists(atPath: outURL.path) {
             try FileManager.default.removeItem(at: outURL)
         }
@@ -237,8 +274,8 @@ final class FrameRateConverter: @unchecked Sendable {
 
         let sourceBitrate = Double(dataRate) > 0 ? Double(dataRate) : Double(width * height) * 8
         let frameRatio = Double(fps) / Double(max(nominalFPS, 1))
-        let bitrateFactor = max(1.5, frameRatio / 2)
-        let bitrate = Int(min(max(sourceBitrate * bitrateFactor, 6_000_000), 300_000_000))
+        let bitrateFactor = max(1.5, frameRatio / 2) * options.outputQuality.bitrateMultiplier
+        let bitrate = Int(min(max(sourceBitrate * bitrateFactor, options.outputQuality.minimumBitrate), 300_000_000))
         var compression: [String: Any] = [
             AVVideoAverageBitRateKey: bitrate,
             AVVideoExpectedSourceFrameRateKey: Int(fps),

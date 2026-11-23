@@ -8,7 +8,7 @@
 owner=$(git config framebooster.owneremail)
 email=$(git config user.email)
 if [ -n "$owner" ] && [ "$email" != "$owner" ]; then
-    echo "❌ 作者 email（$email）不是專案擁有者（$owner）。請照 CLAUDE.md 第 1 節設定 git。"
+    echo "❌ 作者 email（${email}）不是專案擁有者（${owner}）。請照 CLAUDE.md 第 1 節設定 git。"
     exit 1
 fi
 if [ "$(git config --bool commit.gpgsign)" = "true" ]; then

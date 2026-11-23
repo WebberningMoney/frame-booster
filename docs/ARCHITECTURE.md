@@ -55,6 +55,7 @@ flowchart LR
 | **AVFoundation** | Apple 的影音框架 | 讀影片（`AVAssetReader`）、寫影片（`AVAssetWriter`）、讀資訊（`AVURLAsset`） | `Converter.swift` |
 | **VideoToolbox** | 底層的影片硬體加速框架 | **AI 補幀**（`VTFrameProcessor`）、畫面格式複製（`VTPixelTransferSession`）、HEVC 硬體編碼 | `Converter.swift` |
 | **CoreVideo**／**CoreMedia** | 畫面記憶體與時間的基本型別 | 畫面記憶體池（`CVPixelBufferPool`、IOSurface）、精確時間（`CMTime`） | `Converter.swift` |
+| **UserDefaults** | macOS 的 App 偏好設定 | 記住使用者選的輸出資料夾 | `App.swift` |
 | **Swift Concurrency** | `async`／`await` 非同步寫法 | 讀影片資訊、整個轉檔流程、等寫入完成 | `run()`、`App.swift` |
 | **GCD**（Grand Central Dispatch） | 傳統的多工作線工具 | 影像／聲音各自一條工作線、等待 AI 算完（`DispatchSemaphore`）、等全部寫完（`DispatchGroup`） | `run()`、`FrameGenerator` |
 | **swiftc**＋**Bash** | 命令列編譯器與腳本 | 不用 Xcode 專案就能編譯、自我測試、安裝 | `scripts/`、`安裝.command` |
@@ -73,20 +74,23 @@ classDiagram
         視窗程式進入點 @main
     }
     class ContentView {
-        拖放區、目標幀率下拉選單
-        品質／速度切換、工作清單
+        拖放區、目標幀率下拉選單、輸出位置
+        進階設定（補幀方式、輸出畫質）
+        工作清單（進度、預估剩餘時間）
     }
     class JobQueue {
         jobs: [Job]
-        targetFPS / highQuality
+        targetFPS / highQuality / outputQuality
+        outputDirectory（記在偏好設定）
         add：加入影片
         startNext：開始下一支
         cancelAll：全部取消
     }
     class Job {
         input: URL
-        targetFPS / highQuality（加入時記下）
-        status / progress / output
+        targetFPS / highQuality / outputQuality
+        outputDirectory（加入時記下）
+        status / progress / remaining / output
     }
     class FPSPreset {
         fps: 60/120/144/240
@@ -95,7 +99,8 @@ classDiagram
     }
     class CLI_main {
         讀參數、顯示進度
-        --fps --fast -o --info
+        --fps --fast --quality
+        --out-dir -o --info
     }
     class FrameRateConverter {
         run：轉檔，回傳輸出檔（async）
@@ -104,9 +109,16 @@ classDiagram
     }
     class ConvertOptions {
         targetFPS
-        highQuality
+        highQuality（補幀方式：精細／快速）
+        outputQuality
+        outputDirectory
         maxInterpolationGap
-        outputURL
+        outputURL（命令列 -o）
+    }
+    class OutputQuality {
+        high / standard / compact
+        bitrateMultiplier：1.5／1／0.6
+        minimumBitrate
     }
     class ConvertError {
         message
@@ -125,6 +137,7 @@ classDiagram
     JobQueue --> FrameRateConverter : 一次一支
     CLI_main --> FrameRateConverter
     FrameRateConverter ..> ConvertOptions
+    ConvertOptions ..> OutputQuality
     FrameRateConverter ..> ConvertError
     FrameRateConverter *-- FrameGenerator
 ```
@@ -148,7 +161,7 @@ sequenceDiagram
     participant W as AVAssetWriter
 
     使用者->>UI: 選目標幀率，拖入影片
-    UI->>UI: 建立 Job（記下幀率、品質）
+    UI->>UI: 建立 Job（記下幀率、補幀方式、輸出畫質、輸出位置）
     UI->>C: run()（背景執行）
     C->>C: 讀影片資訊（尺寸、幀率、色彩、聲音軌）
     alt 影片已經是目標幀率以上
@@ -167,7 +180,7 @@ sequenceDiagram
         G->>AI: process（a、b、位置比例）
         AI-->>G: 補出的畫面
         G-->>W: 依時間順序交出畫面
-        C-->>UI: 進度 %
+        C-->>UI: 進度 %（畫面算出預估剩餘時間）
     end
     Note over R,W: 聲音在另一條工作線同時複製
     C->>W: endSession、finishWriting
@@ -285,10 +298,10 @@ flowchart LR
 |---|---|---|
 | 容器 | `.mov` | Apple 裝置原生支援，可以裝的聲音格式比 `.mp4` 多 |
 | 影像編碼 | HEVC（H.265），硬體編碼 | 檔案小、Apple 裝置都能硬體解碼 |
-| 位元率 | 原檔 ×（畫面倍數 ÷ 2），最少 1.5 倍；最低 6 Mbps、最高 300 Mbps | 補出來的畫面和前後很像，很好壓縮，不需要跟畫面數等比例增加。倍數還沒有在實機上調校過 |
+| 位元率 | 原檔 ×（畫面倍數 ÷ 2，最少 1.5）× 輸出畫質倍數（高 1.5／標準 1／省空間 0.6）；最低 8／6／3 Mbps、最高 300 Mbps | 補出來的畫面和前後很像，很好壓縮，不需要跟畫面數等比例增加。倍數還沒有在實機上調校過 |
 | 關鍵畫面間隔 | 每 2 秒一張 | 拖動進度條時反應比較快 |
 | 方向 | 沿用原檔的旋轉設定 | 直拍的手機影片不會變橫的 |
-| 檔名 | `原檔名_<幀率>fps.mov`，重複時加「 2」「 3」… | 絕不覆蓋任何檔案 |
+| 位置與檔名 | 原影片旁邊或選定的資料夾；`原檔名_<幀率>fps.mov`，重複時加「 2」「 3」… | 絕不覆蓋任何檔案；輸出檔和原影片是同一個檔案時直接拒絕 |
 
 ---
 
@@ -304,7 +317,7 @@ flowchart TD
     C1 -- "是" --> C2["swiftc 編譯命令列版<br/>build/frame-booster"]
     C2 --> C3["swiftc 編譯視窗版<br/>（在系統暫存資料夾組裝）"]
     C3 --> C4["iconutil 產生圖示<br/>清掉擴充屬性、codesign 本機簽章<br/>再搬回 build/FrameBooster.app"]
-    C4 --> D["scripts/selftest.sh<br/>測試影片轉成 120、60、144 FPS"]
+    C4 --> D["scripts/selftest.sh<br/>測試影片轉成 60、120、144 FPS<br/>以及 120 FPS 快速，印出各花幾秒"]
     D --> D1{"畫面數、幀率、聲音<br/>都正確？"}
     D1 -- "否" --> X3["不安裝，<br/>保留 build/install_log.txt"]
     D1 -- "是" --> E["複製到「應用程式」並打開"]
@@ -323,7 +336,7 @@ flowchart TD
 | `Resources/Info.plist` | App 的名稱、版本、最低系統版本（15.4）、圖示、可以接受拖放影片 |
 | `assets/AppIcon.iconset` | 圖示原始圖片，編譯時用 `iconutil` 組成 `.icns` |
 | `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc）；App 先在系統暫存資料夾組裝、簽章再搬回來 |
-| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 120、60、144 FPS，檢查畫面數、幀率、聲音 |
+| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音，最後印出各花幾秒 |
 | `scripts/docs/make_mockups.py` | 產生 README 的示意圖（`docs/images/`） |
 | `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片 |
 | `scripts/git-hooks/` | commit／push 前的自動檢查 |
@@ -341,6 +354,9 @@ flowchart TD
 | 用 Apple 內建 AI，不用 RIFE 等開源模型 | 不用下載模型、不用 Python 環境，直接用 Apple 晶片的神經網路引擎；Apple 也在 Compressor 用機器學習做 60／90／120 fps 的影格重定時 |
 | 目標幀率只放 60／120／144／240 | 涵蓋一般螢幕、Apple 與 Android 旗艦、電競裝置；165、185 等少見的數字用 144 就很順，選單保持簡單。命令列版仍可指定任意數字 |
 | 幀率與品質在「加入時」記下 | 轉檔中改設定不會影響正在轉、已排隊的影片，也能讓同一支影片轉出不同版本 |
+| 「補幀方式」和「輸出畫質」分開 | Apple 引擎只有「品質／效能優先」一個開關，管的是補出來的畫面；檔案大小由我們自己的位元率決定。分開才說得清楚，也都收進「進階設定」讓主畫面保持簡單 |
+| 不提供 CPU／GPU／記憶體用量設定 | 解碼、補幀、壓縮大多由 Mac 的專用硬體做，Apple 的 API 沒有「用幾條執行緒、多少 GPU」這類設定；改成顯示預估剩餘時間 |
+| 只記住「輸出位置」 | 其他設定（幀率、補幀方式、畫質）每次打開都回到預設，避免忘記改過而轉出不預期的結果；輸出資料夾則是常常固定的，記住比較方便 |
 | 已達目標幀率就「略過」 | 降幀率不是這個工具的目的，也避免不小心產生比原檔差的檔案 |
 | 一次只轉一支 | 補幀和 HEVC 編碼都很吃硬體，同時轉多支不會比較快 |
 | 安裝時一定跑自我測試 | 這個專案無法在雲端沙盒測試，用測試影片在使用者的 Mac 上確認「真的轉得出來、幀率正確」才安裝。測 144 是為了檢查非整數倍的時間格線 |
