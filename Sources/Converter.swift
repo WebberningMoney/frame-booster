@@ -99,7 +99,8 @@ struct VideoBasics {
     /// 用這組設定轉換時，會不會被「略過」（影片已經是目標幀率以上）
     func wouldSkip(targetFPS: Int32) -> Bool { nominalFPS >= Float(targetFPS) - 0.5 }
 
-    /// 預估輸出檔大小（byte）。HEVC 編碼器遇到簡單的畫面常常用不到設定的位元率，所以實際檔案通常會比預估小一些。
+    /// 預估輸出檔大小（byte）＝（影像位元率＋聲音位元率）× 長度 ÷ 8。
+    /// 實測（M2 Pro、720p、1 分 55 秒、120 FPS 高畫質）實際比預估多約 2%，可能是 .mov 檔本身的格式資料。
     func estimatedBytes(targetFPS: Int32, quality: OutputQuality) -> Int64 {
         let video = FrameRateConverter.videoBitrate(sourceDataRate: videoDataRate, width: width, height: height,
                                                     nominalFPS: nominalFPS, targetFPS: targetFPS, quality: quality)

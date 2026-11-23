@@ -132,13 +132,13 @@ SELBAR = """<div class="row selbar"><span class="btn sm">全選</span><span clas
 waiting = SELBAR + f"""<div class="list">
  <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">旅行_台南.mov</div>
    <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
-   <div class="size">原檔 85.2 MB → 預估約 171 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+   <div class="size">原檔 85.2 MB → 預估約 171 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div><span class="x">✕</span></div>
  <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">家人聚餐.mp4</div>
    <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
-   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div><span class="x">✕</span></div>
  <div class="job">{cb(False)}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">螢幕錄影.mov</div>
    <div class="sub">等待中（沒有勾選，不會轉）</div>
-   <div class="size">原檔 48.6 MB → 預估約 97.1 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+   <div class="size">原檔 48.6 MB → 預估約 97.1 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div><span class="x">✕</span></div>
 </div>"""
 pages["main"] = window(waiting, start="開始轉檔（已勾選 2 支）", start_on=True)
 
@@ -163,13 +163,13 @@ jobs = SELBAR + f"""<div class="list" data-kind="job">
    <div class="sub">完成（48 秒）→ 旅行_台南_120fps.mov</div></div><span class="btn">在 Finder 中顯示</span><span class="x">✕</span></div>
  <div class="job">{cb(False, True)}<div class="st"><span class="spin"></span></div><div class="main"><div class="name">家人聚餐.mp4</div>
    <div class="bar"><i style="width:45%"></i></div><div class="sub">45%・剩餘約 12 秒　→ 120 FPS・精細・標準畫質</div>
-   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際可能小一些）</div></div></div>
+   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div></div>
  <div class="job">{cb(False, True)}<div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">夜市.mp4</div>
    <div class="sub">排隊中　→ 120 FPS・精細・標準畫質</div>
-   <div class="size">原檔 120 MB → 預估約 240 MB（120 FPS・標準畫質，實際可能小一些）</div></div></div>
+   <div class="size">原檔 120 MB → 預估約 240 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div></div>
  <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">生日派對.mov</div>
    <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
-   <div class="size">原檔 96.4 MB → 預估約 193 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+   <div class="size">原檔 96.4 MB → 預估約 193 MB（120 FPS・標準畫質，實際大小可能略有出入）</div></div><span class="x">✕</span></div>
  <div class="job">{cb(False)}<div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_144fps.mov</div>
    <div class="sub">略過：這支影片已經是 144 FPS，不需要轉成 120 FPS。</div></div><span class="x">✕</span></div>
 </div>"""

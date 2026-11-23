@@ -527,7 +527,7 @@ struct JobRow: View {
             return String(format: "原檔 %@・已經是 %.0f FPS，轉成 %ld FPS 會略過", original, b.nominalFPS, Int(fps))
         }
         let est = Self.sizeFormatter.string(fromByteCount: b.estimatedBytes(targetFPS: fps, quality: quality))
-        return "原檔 \(original) → 預估約 \(est)（\(fps) FPS・\(quality.displayName)畫質，實際可能小一些）"
+        return "原檔 \(original) → 預估約 \(est)（\(fps) FPS・\(quality.displayName)畫質，實際大小可能略有出入）"
     }
 
     @ViewBuilder private var statusIcon: some View {
