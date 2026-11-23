@@ -302,8 +302,8 @@ flowchart TD
     C --> C1{"有 Swift 編譯器？"}
     C1 -- "否" --> X2["跳出「命令列開發者工具」安裝視窗<br/>裝好後再雙擊一次"]
     C1 -- "是" --> C2["swiftc 編譯命令列版<br/>build/frame-booster"]
-    C2 --> C3["swiftc 編譯視窗版<br/>build/FrameBooster.app"]
-    C3 --> C4["iconutil 產生圖示<br/>codesign 本機簽章"]
+    C2 --> C3["swiftc 編譯視窗版<br/>（在系統暫存資料夾組裝）"]
+    C3 --> C4["iconutil 產生圖示<br/>清掉擴充屬性、codesign 本機簽章<br/>再搬回 build/FrameBooster.app"]
     C4 --> D["scripts/selftest.sh<br/>測試影片轉成 120、60、144 FPS"]
     D --> D1{"畫面數、幀率、聲音<br/>都正確？"}
     D1 -- "否" --> X3["不安裝，<br/>保留 build/install_log.txt"]
@@ -322,7 +322,7 @@ flowchart TD
 | `Sources/CLI/main.swift` | 命令列版：讀參數、顯示進度、`--info` |
 | `Resources/Info.plist` | App 的名稱、版本、最低系統版本（15.4）、圖示、可以接受拖放影片 |
 | `assets/AppIcon.iconset` | 圖示原始圖片，編譯時用 `iconutil` 組成 `.icns` |
-| `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc） |
+| `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc）；App 先在系統暫存資料夾組裝、簽章再搬回來 |
 | `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 120、60、144 FPS，檢查畫面數、幀率、聲音 |
 | `scripts/docs/make_mockups.py` | 產生 README 的示意圖（`docs/images/`） |
 | `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片 |
@@ -345,6 +345,7 @@ flowchart TD
 | 一次只轉一支 | 補幀和 HEVC 編碼都很吃硬體，同時轉多支不會比較快 |
 | 安裝時一定跑自我測試 | 這個專案無法在雲端沙盒測試，用測試影片在使用者的 Mac 上確認「真的轉得出來、幀率正確」才安裝。測 144 是為了檢查非整數倍的時間格線 |
 | 不用 SwiftUI 的巨集（`@State`、`@Observable`、`#Preview` 等） | 新版 SDK 裡這些是「巨集」，編譯時需要只有完整 Xcode 才有的 SwiftUIMacros 外掛；只裝「命令列開發者工具」會編譯失敗。改用 `ObservableObject`＋`@Published`＋`@StateObject`／`@EnvironmentObject` |
+| App 在系統暫存資料夾組裝、簽章 | 專案放在開了 iCloud 同步的「桌面」或「文件」時，檔案會被加上 Finder 附加資訊，`codesign` 會拒絕簽章 |
 | 跨工作線的物件標成 `@unchecked Sendable` | AVFoundation 的讀寫物件沒有標成可跨工作線（Sendable），但程式保證每個物件只在固定的一條工作線上使用；包進 `VideoPipe`／`AudioPipe` 再交給工作線，避免大量警告 |
 | 不做剪接點偵測（目前） | 120 FPS 下剪接點的殘影只有約 1/40 秒；之後若有需要再加 |
 

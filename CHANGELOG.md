@@ -16,6 +16,7 @@
 ### 修正
 
 - 只裝「命令列開發者工具」（沒有完整 Xcode）時，視窗版編譯失敗（`@State` 需要 Xcode 才有的 SwiftUI 巨集外掛）。改用不需要巨集的寫法。
+- 專案放在「桌面」（開了 iCloud 同步）時，App 簽章失敗（resource fork, Finder information, or similar detritus not allowed）。改成在系統暫存資料夾組裝、簽章後再搬回來。
 - 清掉編譯時大量的「Sendable」警告（不影響功能，但會讓安裝紀錄很難看懂）。
 
 ### 變更

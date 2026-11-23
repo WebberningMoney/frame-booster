@@ -48,7 +48,7 @@ fi
 TARGET="$DEST/FrameBooster.app"
 pkill -x FrameBooster 2>/dev/null && sleep 1
 rm -rf "$TARGET"
-ditto build/FrameBooster.app "$TARGET" || fail "無法複製到 $DEST。"
+ditto --norsrc --noextattr build/FrameBooster.app "$TARGET" || fail "無法複製到 $DEST。"
 
 echo ""
 echo "✅ 安裝完成！FrameBooster 已放在：$TARGET"
