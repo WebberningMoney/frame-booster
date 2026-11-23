@@ -6,6 +6,7 @@
 #   1. 畫面數符合預期（例如 30 → 120 約 4 倍、30 → 144 約 4.8 倍）
 #   2. 實際幀率（畫面數 ÷ 長度）約等於目標
 #   3. 聲音還在
+#   4. 有「用原本的幀率正常播放」標記（iPhone「照片」才不會當成慢動作）
 # 最後印出每一種花了幾秒（第一次轉檔包含 AI 引擎載入的時間，所以先轉 60 當暖身）。
 
 cd "$(dirname "$0")/.."
@@ -44,10 +45,11 @@ check() {
     SUMMARY="${SUMMARY}  ${label}：${took} 秒"$'\n'
     local after; after=$("$BIN" --info "$out") || { echo "❌ 讀不到轉好的影片"; ok=0; return; }
     echo "結果：$after"
-    local fout fps audio expected
+    local fout fps audio full expected
     fout=$(field frames "$after")
     fps=$(field measured "$after")
     audio=$(field audioTracks "$after")
+    full=$(field fullFrameRate "$after")
     # 預期畫面數 = 原本畫面數 × 目標幀率 ÷ 原本幀率（四捨五入）
     expected=$(awk -v n="$fin" -v t="$target" -v f="$fpsin" 'BEGIN { printf "%d", n * t / f + 0.5 }')
     if [ -z "$fout" ] || [ "$fout" -lt $(( expected - 3 )) ] || [ "$fout" -gt $(( expected + 3 )) ]; then
@@ -64,6 +66,11 @@ check() {
         echo "❌ 聲音不見了"; ok=0
     else
         echo "✔ 聲音：保留"
+    fi
+    if [ "${full:-}" != "1" ]; then
+        echo "❌ 沒有「正常速度播放」標記（iPhone 可能會當成慢動作播放）"; ok=0
+    else
+        echo "✔ 播放：標記為正常速度（不會被當成慢動作）"
     fi
 }
 

@@ -12,6 +12,7 @@
 //      剛好落在原始畫面上的格子直接用原圖，中間的格子交給 AI 補出來。
 //   3. AVAssetWriter 把所有畫面壓成 HEVC（H.265）存成 .mov；聲音原封不動複製過去。
 //   原始影片只會被讀取，絕不會被修改或刪除。
+//   輸出檔會標上「用原本的幀率正常播放」，避免 iPhone「照片」把 120 FPS 影片當成慢動作。
 //
 // 另外提供 VideoBasics：快速讀出影片長度、資料量等，讓畫面在轉檔前先「預估轉好後的大小」；
 // 預估和實際壓縮用的是同一個位元率公式（videoBitrate）。
@@ -73,10 +74,13 @@ struct VideoInfo: CustomStringConvertible {
     var codec = ""
     var audioTracks = 0
     var transfer = ""
+    /// 「用原本的幀率正常播放」標記：1＝正常速度、0＝慢動作、-1＝沒有標記
+    var fullFrameRate = -1
     var measuredFPS: Double { duration > 0 ? Double(frameCount) / duration : 0 }
     var description: String {
-        String(format: "%ldx%ld  codec=%@  nominal=%.2f fps  frames=%ld  duration=%.3fs  measured=%.2f fps  audioTracks=%ld  transfer=%@",
-               width, height, codec, nominalFPS, frameCount, duration, measuredFPS, audioTracks, transfer.isEmpty ? "-" : transfer)
+        String(format: "%ldx%ld  codec=%@  nominal=%.2f fps  frames=%ld  duration=%.3fs  measured=%.2f fps  audioTracks=%ld  transfer=%@  fullFrameRate=%@",
+               width, height, codec, nominalFPS, frameCount, duration, measuredFPS, audioTracks, transfer.isEmpty ? "-" : transfer,
+               fullFrameRate < 0 ? "-" : String(fullFrameRate))
     }
 }
 
@@ -296,6 +300,9 @@ final class FrameRateConverter: @unchecked Sendable {
             try FileManager.default.removeItem(at: outURL)
         }
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
+        // 標記「這支影片要用原本的幀率、正常速度播放」。沒有這個標記時，iPhone 的「照片」和 Mac 的
+        // QuickTime Player 會把 120 FPS 以上的影片當成「慢動作」，中間一段放慢播放（要手動把速度調回 100%）。
+        writer.metadata = [Self.fullFrameRatePlaybackItem()]
 
         let bitrate = Int(Self.videoBitrate(sourceDataRate: Double(dataRate), width: width, height: height,
                                             nominalFPS: nominalFPS, targetFPS: fps, quality: options.outputQuality))
@@ -519,6 +526,17 @@ final class FrameRateConverter: @unchecked Sendable {
                            audioDataRate: audioRate, fileBytes: bytes)
     }
 
+    /// 「用原本的幀率正常播放」標記（Apple 從 iOS 18／macOS 15 起支援的 QuickTime 影片資訊）。
+    /// 值是 1＝正常速度播放；0＝當成慢動作。iPhone 自己拍的一般影片也會帶這個標記。
+    static func fullFrameRatePlaybackItem() -> AVMetadataItem {
+        let item = AVMutableMetadataItem()
+        item.keySpace = .quickTimeMetadata
+        item.key = AVMetadataKey.quickTimeMetadataKeyFullFrameRatePlaybackIntent.rawValue as NSString
+        item.value = NSNumber(value: 1)
+        item.dataType = kCMMetadataBaseDataType_SInt8 as String
+        return item
+    }
+
     static func info(for url: URL) async throws -> VideoInfo {
         let asset = AVURLAsset(url: url)
         var info = VideoInfo()
@@ -534,6 +552,13 @@ final class FrameRateConverter: @unchecked Sendable {
             }
         }
         info.audioTracks = try await asset.loadTracks(withMediaType: .audio).count
+        // 有沒有「用原本的幀率正常播放」標記（自我測試會檢查轉好的影片有這個標記）
+        let meta = (try? await asset.loadMetadata(for: .quickTimeMetadata)) ?? []
+        let intentKey = AVMetadataKey.quickTimeMetadataKeyFullFrameRatePlaybackIntent.rawValue
+        if let item = meta.first(where: { ($0.key as? String) == intentKey }),
+           let n = try? await item.load(.numberValue) {
+            info.fullFrameRate = n.intValue
+        }
         let reader = try AVAssetReader(asset: asset)
         let out = AVAssetReaderTrackOutput(track: v, outputSettings: nil)
         reader.add(out)

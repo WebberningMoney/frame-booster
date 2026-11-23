@@ -66,5 +66,6 @@ commit 時如果改了程式卻沒有動到任何文件，`pre-commit` 會擋下
 - **App 圖示要符合 macOS 26 的規格**：圖案全部在圓角方形裡、圓角方形內完全不透明、不要陰影、不要有超出邊界的像素，
   否則 macOS 會把圖示放進灰色的框裡（0.1 版發生過）。改圖示請改 `scripts/docs/make_icon.py` 再重新產生 `assets/AppIcon.iconset/`。
 - **預估大小和實際壓縮要共用 `FrameRateConverter.videoBitrate`**：改位元率規則時只改這一個地方，README「預估轉好後的大小」的說明也要跟著檢查。
+- **輸出檔要保留「用原本的幀率正常播放」標記**（`fullFrameRatePlaybackItem()`）：拿掉的話，iPhone「照片」會把 120 FPS 影片當成慢動作。自我測試會檢查。
 - 這個工具**完全不連網**。若要新增任何對外連線，先問擁有者，並寫進 README 的「隱私」一節。
 - 不可復原的動作（例如解除安裝）在腳本裡都要有確認步驟。
