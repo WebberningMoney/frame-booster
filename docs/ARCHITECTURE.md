@@ -311,7 +311,7 @@ flowchart LR
 **可以讀哪些影片**
 
 - 由 AVFoundation 讀取：`.mov`、`.mp4`、`.m4v` 裡的 H.264、HEVC 等 Apple 支援的格式。
-- **VP9**（網站下載的 .mp4 常見）：macOS 有內建 VP9 解碼器，但預設沒有啟用，要先呼叫 `VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)`（Safari、Firefox、FFmpeg 也是這樣做）。程式在讀影片前都會先呼叫一次。
+- **VP9**（網站下載的 .mp4 常見）：macOS 有內建 VP9 解碼器，但預設沒有啟用，要先呼叫 `VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)`（Safari、Firefox、FFmpeg 也是這樣做）。程式在讀影片前都會先呼叫一次。打開後 `AVAssetReader` 就能直接讀 VP9 的 .mp4（已在 M2 Pro、macOS 27 上確認）。
 - 讀不了時（例如 M1／M2 上的 AV1），用 `webCodecName` 認出格式，顯示白話的錯誤訊息和處理方法。
 
 **色彩與 HDR**
@@ -351,7 +351,7 @@ flowchart TD
     C1 -- "是" --> C2["swiftc 編譯命令列版<br/>build/frame-booster"]
     C2 --> C3["swiftc 編譯視窗版<br/>（在系統暫存資料夾組裝）"]
     C3 --> C4["iconutil 產生圖示<br/>清掉擴充屬性、codesign 本機簽章<br/>再搬回 build/FrameBooster.app"]
-    C4 --> D["scripts/selftest.sh<br/>測試影片轉成 60、120、144 FPS<br/>以及 120 FPS 快速，印出各花幾秒"]
+    C4 --> D["scripts/selftest.sh<br/>測試影片轉成 60、120、144 FPS<br/>以及 120 FPS 快速，印出各花幾秒<br/>（再試轉 VP9 影片，只報告結果）"]
     D --> D1{"畫面數、幀率、聲音、<br/>播放標記都正確？"}
     D1 -- "否" --> X3["不安裝，<br/>保留 build/install_log.txt"]
     D1 -- "是" --> E["複製到「應用程式」並打開"]
@@ -431,7 +431,6 @@ flowchart TD
 - HDR 影片轉完是否仍是 HDR、在 iPhone 上播放是否正常
 - 聲音是否同步
 - 直拍影片方向是否正確
-- 打開 VP9 解碼器後，`AVAssetReader` 是否真的能讀 VP9 的 .mp4（自我測試會報告）
 - 預估大小和實際檔案差多少（目前只量過一支 720p 影片，多約 2%）
 - 下拉選單的滑鼠停留說明（每個選項各自的說明能不能顯示）
 - 拖放、Dock 圖示拖放、「在 Finder 中顯示」

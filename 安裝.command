@@ -2,7 +2,8 @@
 # 安裝.command — 雙擊這個檔案就會：
 #   1. 檢查這台 Mac 能不能用（Apple 晶片＋macOS 15.4 以上）
 #   2. 把原始碼編譯成程式（scripts/build.sh）
-#   3. 用測試影片實際轉成 60、120、144 FPS（以及 120 FPS 快速），確認結果正確（scripts/selftest.sh）
+#   3. 用測試影片實際轉成 60、120、144 FPS（以及 120 FPS 快速），確認結果正確（scripts/selftest.sh）；
+#      另外試轉一支 VP9 格式的影片，只報告結果、不影響安裝
 #   4. 測試通過才把 FrameBooster 放進「應用程式」資料夾，並打開它
 # 過程會記錄在 build/install_log.txt，出問題時可以把它提供給開發者。
 # 更新到新版時，再雙擊一次即可（會取代舊版的 App；你轉好的影片不受影響）。
