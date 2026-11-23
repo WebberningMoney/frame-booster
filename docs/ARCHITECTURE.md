@@ -76,24 +76,35 @@ classDiagram
     class ContentView {
         拖放區、目標幀率下拉選單、輸出位置
         進階設定（補幀方式、輸出畫質）
-        開始轉檔／取消轉檔按鈕
-        工作清單（進度、預估剩餘時間、移除）
+        開始轉檔（已勾選 N 支）／取消轉檔按鈕
+        全選／全不選
+        工作清單（勾選框、進度、預估剩餘時間、預估大小、移除）
     }
     class JobQueue {
         jobs: [Job]
         targetFPS / highQuality / outputQuality
         outputDirectory（記在偏好設定）
-        add：加入影片（先放在等待中）
-        startRound：按開始轉檔，套用設定
+        add：加入影片（等待中、預設勾選，背景讀大小資訊）
+        setChecked：勾選／取消（Shift 連選一整段）
+        setAllChecked：全選／全不選
+        startRound：把勾選的影片套用設定、排隊
         startNext：開始下一支
         cancelRound：取消這一輪
         remove：從清單移除
     }
     class Job {
         input: URL
+        isChecked：有沒有勾選
+        basics：VideoBasics（算預估大小用）
         settings：JobSettings（按開始時填入）
         status：等待中→排隊中→轉檔中→完成…
+        isSelectable：等待中或已結束才能勾
         progress / remaining / output
+    }
+    class VideoBasics {
+        長度、幀率、尺寸、資料量、檔案大小
+        wouldSkip：會不會被略過
+        estimatedBytes：預估轉好後的大小
     }
     class JobSettings {
         targetFPS / highQuality
@@ -113,6 +124,8 @@ classDiagram
         run：轉檔，回傳輸出檔（async）
         cancel：取消
         info：讀影片資訊 → VideoInfo
+        basics：快速讀大小資訊 → VideoBasics
+        videoBitrate：位元率公式（轉檔和預估共用）
     }
     class ConvertOptions {
         targetFPS
@@ -142,6 +155,8 @@ classDiagram
     ContentView ..> FPSPreset : 選項與裝置清單
     JobQueue "1" o-- "*" Job
     Job ..> JobSettings
+    Job ..> VideoBasics
+    VideoBasics ..> FrameRateConverter : 用同一個 videoBitrate
     JobQueue --> FrameRateConverter : 一次一支
     CLI_main --> FrameRateConverter
     FrameRateConverter ..> ConvertOptions
@@ -169,9 +184,11 @@ sequenceDiagram
     participant W as AVAssetWriter
 
     使用者->>UI: 拖入影片
-    UI->>UI: 建立 Job（等待中）
-    使用者->>UI: 選好設定，按「開始轉檔」
-    UI->>UI: 把當下的設定（幀率、補幀方式、輸出畫質、輸出位置）套用到所有等待中的 Job（排隊中）
+    UI->>UI: 建立 Job（等待中、預設勾選）
+    UI->>C: basics()（背景讀長度、資料量）
+    C-->>UI: VideoBasics → 每列顯示預估大小
+    使用者->>UI: 勾選要轉的影片、選好設定，按「開始轉檔」
+    UI->>UI: 把當下的設定（幀率、補幀方式、輸出畫質、輸出位置）套用到勾選的 Job（排隊中、自動取消勾選）
     UI->>C: run()（背景執行）
     C->>C: 讀影片資訊（尺寸、幀率、色彩、聲音軌）
     alt 影片已經是目標幀率以上
@@ -308,7 +325,7 @@ flowchart LR
 |---|---|---|
 | 容器 | `.mov` | Apple 裝置原生支援，可以裝的聲音格式比 `.mp4` 多 |
 | 影像編碼 | HEVC（H.265），硬體編碼 | 檔案小、Apple 裝置都能硬體解碼 |
-| 位元率 | 原檔 ×（畫面倍數 ÷ 2，最少 1.5）× 輸出畫質倍數（高 1.5／標準 1／省空間 0.6）；最低 8／6／3 Mbps、最高 300 Mbps | 補出來的畫面和前後很像，很好壓縮，不需要跟畫面數等比例增加。倍數還沒有在實機上調校過 |
+| 位元率（`videoBitrate`） | 原檔 ×（畫面倍數 ÷ 2，最少 1.5）× 輸出畫質倍數（高 1.5／標準 1／省空間 0.6）；最低 8／6／3 Mbps、最高 300 Mbps | 補出來的畫面和前後很像，很好壓縮，不需要跟畫面數等比例增加。倍數還沒有在實機上調校過。畫面上的「預估大小」也用同一個公式：（影像位元率＋聲音位元率）× 長度 ÷ 8 |
 | 關鍵畫面間隔 | 每 2 秒一張 | 拖動進度條時反應比較快 |
 | 方向 | 沿用原檔的旋轉設定 | 直拍的手機影片不會變橫的 |
 | 位置與檔名 | 原影片旁邊或選定的資料夾；`原檔名_<幀率>fps.mov`，重複時加「 2」「 3」… | 絕不覆蓋任何檔案；輸出檔和原影片是同一個檔案時直接拒絕 |
@@ -339,8 +356,8 @@ flowchart TD
 
 | 檔案 | 負責什麼 |
 |---|---|
-| `Sources/Converter.swift` | 核心。`FrameRateConverter` 負責整個轉檔流程；`FrameGenerator` 決定每一格放什麼畫面；`VideoInfo` 讀影片資訊；`ConvertError` 區分「錯誤」和「略過」 |
-| `Sources/App/App.swift` | 視窗版（SwiftUI）：拖放、排隊、目標幀率下拉選單、品質／速度切換、進度條 |
+| `Sources/Converter.swift` | 核心。`FrameRateConverter` 負責整個轉檔流程；`FrameGenerator` 決定每一格放什麼畫面；`VideoInfo` 讀影片資訊；`VideoBasics` 算預估大小；`ConvertError` 區分「錯誤」和「略過」 |
+| `Sources/App/App.swift` | 視窗版（SwiftUI）：拖放、勾選（Shift 連選、全選）、排隊、目標幀率下拉選單、輸出位置、進階設定、進度條、預估剩餘時間與大小 |
 | `Sources/App/FPSPresets.swift` | 目標幀率選項（60／120／144／240）與各自適合的裝置清單（選單文字、滑鼠停留說明） |
 | `Sources/CLI/main.swift` | 命令列版：讀參數、顯示進度、`--info` |
 | `Resources/Info.plist` | App 的名稱、版本、最低系統版本（15.4）、圖示、可以接受拖放影片 |
@@ -348,7 +365,7 @@ flowchart TD
 | `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc）；App 先在系統暫存資料夾組裝、簽章再搬回來 |
 | `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音，最後印出各花幾秒 |
 | `scripts/docs/make_mockups.py` | 產生 README 的示意圖（`docs/images/`） |
-| `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片 |
+| `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片（符合 macOS 26 的圓角方形規格） |
 | `scripts/git-hooks/` | commit／push 前的自動檢查 |
 | `安裝.command` | 檢查電腦 → 編譯 → 自我測試 → 複製到「應用程式」 |
 | `解除安裝.command` | 確認後從「應用程式」移除 App |
@@ -366,6 +383,11 @@ flowchart TD
 | 要按「開始轉檔」才開始 | 擁有者回饋：拖進來就馬上轉，來不及改設定或拿掉拖錯的影片 |
 | 設定在「按開始時」套用到整輪 | 拖完再調設定也來得及，最直覺；轉檔中改設定會用在下一輪。同一支影片要兩種版本就分兩輪 |
 | 轉檔中新加入的影片要再按一次開始 | 擁有者的選擇：避免不小心用了不對的設定。新加入的會停在「等待中」，畫面上會提示 |
+| 用勾選框決定這一輪轉哪些 | 擁有者回饋：想從清單挑第 1～5 支或第 1、2、4 支，用同一組設定轉。新加入的預設勾選（最常見是全部都要轉）；Shift 連選和全選／全不選讓多支影片也好操作。用勾選框而不是 macOS 清單的選取（反白），是因為勾選狀態看得清楚、點別的地方也不會不見 |
+| 按開始後自動取消勾選 | 勾選框代表「下一輪要轉的」，這樣轉完後清單上不會殘留勾選，下一輪只要勾新的就好 |
+| 已結束的影片可以再勾起來重轉 | 方便同一支影片再轉一個不同幀率或畫質的版本；輸出檔名重複時自動加編號，不會蓋掉之前的 |
+| 每列顯示預估大小，且和實際壓縮共用 `videoBitrate` | 讓使用者先知道要準備多少空間；共用同一個公式，改了壓縮設定時預估也會一起改，不會兩邊對不上。實際檔案通常比預估小，畫面上有寫 |
+| 圖示：圓角方形內完全不透明、沒有陰影、沒有超出邊界 | macOS 26 起，系統會把不合規格的圖示（有超出圓角方形的像素、半透明的地方）放進灰色的框裡。正式做法是用 Xcode 的 Icon Composer，但擁有者沒有完整 Xcode，所以改用符合規格的 PNG 組成 `.icns` |
 | 「補幀方式」和「輸出畫質」分開 | Apple 引擎只有「品質／效能優先」一個開關，管的是補出來的畫面；檔案大小由我們自己的位元率決定。分開才說得清楚，也都收進「進階設定」讓主畫面保持簡單 |
 | 不提供 CPU／GPU／記憶體用量設定 | 解碼、補幀、壓縮大多由 Mac 的專用硬體做，Apple 的 API 沒有「用幾條執行緒、多少 GPU」這類設定；改成顯示預估剩餘時間 |
 | 只記住「輸出位置」 | 其他設定（幀率、補幀方式、畫質）每次打開都回到預設，避免忘記改過而轉出不預期的結果；輸出資料夾則是常常固定的，記住比較方便 |
@@ -401,6 +423,8 @@ flowchart TD
 - HDR 影片轉完是否仍是 HDR、在 iPhone 上播放是否正常
 - 聲音是否同步
 - 直拍影片方向是否正確
+- 預估大小和實際檔案差多少
+- 新圖示在 macOS 26 以上是否滿版（沒有灰色框）
 - 下拉選單的滑鼠停留說明（每個選項各自的說明能不能顯示）
 - 拖放、Dock 圖示拖放、「在 Finder 中顯示」
 - macOS 的檔案存取詢問（桌面、下載項目、文件）

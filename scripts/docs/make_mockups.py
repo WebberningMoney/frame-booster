@@ -20,7 +20,7 @@ CSS = """
 * { box-sizing: border-box; }
 body { margin: 0; padding: 28px; display: inline-block; background: #d9dde3; font-family: 'Noto Sans CJK TC', 'PingFang TC', -apple-system, sans-serif;
        -webkit-font-smoothing: antialiased; }
-.win { width: 640px; background: #f5f5f7; border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.28), 0 0 0 .5px rgba(0,0,0,.25);
+.win { width: 720px; background: #f5f5f7; border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.28), 0 0 0 .5px rgba(0,0,0,.25);
        overflow: hidden; position: relative; }
 .titlebar { height: 38px; display: flex; align-items: center; justify-content: center; position: relative;
             background: #ececee; border-bottom: 1px solid #d6d6d8; font-size: 13px; font-weight: 600; color: #333; }
@@ -74,6 +74,13 @@ body { margin: 0; padding: 28px; display: inline-block; background: #d9dde3; fon
 .btn.primary.off { background: #b9d8fb; color: #f5f9ff; }
 .note { font-size: 11.5px; color: #86868b; margin-top: -6px; }
 .x { color: #a1a1a6; font-size: 13px; padding: 0 4px; }
+.cb { width: 15px; height: 15px; border-radius: 4px; border: 1px solid #b0b0b5; background: #fff; display: inline-flex;
+      align-items: center; justify-content: center; font-size: 11px; color: #fff; flex: none; }
+.cb.on { background: #0a84ff; border-color: #0a84ff; }
+.cb.dis { background: #eeeef0; border-color: #d4d4d8; }
+.size { font-size: 10.5px; color: #a1a1a6; margin-top: 2px; }
+.selbar { gap: 6px; margin-bottom: -6px; } .btn.sm { font-size: 11px; padding: 1px 8px; }
+.tipline { font-size: 10.5px; color: #86868b; margin-left: 4px; }
 """
 
 FILM_ICON = """<svg class="icon" viewBox="0 0 40 34"><g fill="none" stroke="{c}" stroke-width="2.2" stroke-linejoin="round">
@@ -114,13 +121,26 @@ ADV = """<div class="adv">
 EMPTY = '<div class="hint">轉好的影片會放在原影片旁邊，檔名加上「_120fps」。</div>'
 
 pages = {}
-waiting = """<div class="list">
- <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">旅行_台南.mov</div>
-   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
- <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">家人聚餐.mp4</div>
-   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
+def cb(on=True, disabled=False):
+    """勾選框"""
+    cls = "cb" + (" on" if on else "") + (" dis" if disabled else "")
+    return f'<span class="{cls}">{"✓" if on and not disabled else ""}</span>'
+
+SELBAR = """<div class="row selbar"><span class="btn sm">全選</span><span class="btn sm">全不選</span>
+  <span class="tipline">小技巧：勾一支後，按住 Shift 再勾另一支，中間整段都會勾起來</span></div>"""
+
+waiting = SELBAR + f"""<div class="list">
+ <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">旅行_台南.mov</div>
+   <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
+   <div class="size">原檔 85.2 MB → 預估約 171 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+ <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">家人聚餐.mp4</div>
+   <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
+   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+ <div class="job">{cb(False)}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">螢幕錄影.mov</div>
+   <div class="sub">等待中（沒有勾選，不會轉）</div>
+   <div class="size">原檔 48.6 MB → 預估約 97.1 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
 </div>"""
-pages["main"] = window(waiting, start="開始轉檔（2 支）", start_on=True)
+pages["main"] = window(waiting, start="開始轉檔（已勾選 2 支）", start_on=True)
 
 menu_items = [
     ("60 FPS — 一般螢幕、電視、iPhone 17e、MacBook Air", ""),
@@ -138,20 +158,23 @@ menu = ('<div class="menu" style="left:82px;top:211px">' +
         f'<div class="tip" style="left:236px;top:330px">{tip144}</div>' + CURSOR.format(x=432, y=283))
 pages["fps-menu"] = window('<div class="hint"></div>', overlay=menu)
 
-jobs = """<div class="list" data-kind="job">
- <div class="job"><div class="st" style="color:#34c759">✔</div><div class="main"><div class="name">旅行_台南.mov</div>
+jobs = SELBAR + f"""<div class="list" data-kind="job">
+ <div class="job">{cb(False)}<div class="st" style="color:#34c759">✔</div><div class="main"><div class="name">旅行_台南.mov</div>
    <div class="sub">完成（48 秒）→ 旅行_台南_120fps.mov</div></div><span class="btn">在 Finder 中顯示</span><span class="x">✕</span></div>
- <div class="job"><div class="st"><span class="spin"></span></div><div class="main"><div class="name">家人聚餐.mp4</div>
-   <div class="bar"><i style="width:45%"></i></div><div class="sub">45%・剩餘約 12 秒　→ 120 FPS・精細・標準畫質</div></div></div>
- <div class="job"><div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">夜市.mp4</div>
-   <div class="sub">排隊中　→ 120 FPS・精細・標準畫質</div></div></div>
- <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">生日派對.mov</div>
-   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
- <div class="job"><div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_144fps.mov</div>
+ <div class="job">{cb(False, True)}<div class="st"><span class="spin"></span></div><div class="main"><div class="name">家人聚餐.mp4</div>
+   <div class="bar"><i style="width:45%"></i></div><div class="sub">45%・剩餘約 12 秒　→ 120 FPS・精細・標準畫質</div>
+   <div class="size">原檔 312 MB → 預估約 624 MB（120 FPS・標準畫質，實際可能小一些）</div></div></div>
+ <div class="job">{cb(False, True)}<div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">夜市.mp4</div>
+   <div class="sub">排隊中　→ 120 FPS・精細・標準畫質</div>
+   <div class="size">原檔 120 MB → 預估約 240 MB（120 FPS・標準畫質，實際可能小一些）</div></div></div>
+ <div class="job">{cb()}<div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">生日派對.mov</div>
+   <div class="sub">等待中（已勾選，按「開始轉檔」後開始）</div>
+   <div class="size">原檔 96.4 MB → 預估約 193 MB（120 FPS・標準畫質，實際可能小一些）</div></div><span class="x">✕</span></div>
+ <div class="job">{cb(False)}<div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_144fps.mov</div>
    <div class="sub">略過：這支影片已經是 144 FPS，不需要轉成 120 FPS。</div></div><span class="x">✕</span></div>
 </div>"""
 pages["converting"] = window(jobs, start="轉檔中…", running=True,
-    note="轉檔中新加入的 1 支影片，會在這一輪結束後，再按一次「開始轉檔」才開始。")
+    note="轉檔中新加入的 1 支影片，會在這一輪結束後，勾選後再按一次「開始轉檔」才開始。")
 adv_tip = ("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。"
            "標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。改了只影響之後加入的影片。")
 pages["advanced"] = window('<div class="hint"></div>', advanced=True, outdir="~/Movies/120fps 影片",

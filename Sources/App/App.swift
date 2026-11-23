@@ -1,12 +1,15 @@
-// App.swift — FrameBooster 的視窗程式（把影片拖進來就開始轉）。
+// App.swift — FrameBooster 的視窗程式（拖進影片 → 勾選 → 按「開始轉檔」）。
 //
 // 白話說明：
-//   - 把影片拖進來（或按「選擇影片…」）後，影片先停在「等待中」，不會馬上開始。
+//   - 把影片拖進來（或按「選擇影片…」）後，影片先停在「等待中」，而且**預設是勾選的**，不會馬上開始。
+//   - 每一列前面有勾選框：可以只勾其中幾支（按住 Shift 再勾，可以一次勾一整段），也有「全選／全不選」。
 //   - 選好「目標幀率」（60／120／144／240，預設 120）、「輸出位置」（預設原影片旁邊），
 //     以及「進階設定」裡的「補幀方式」（精細／快速）和「輸出畫質」（高／標準／省空間），
-//     再按「開始轉檔」：所有等待中的影片都用「按下那一刻」的設定轉。
-//   - 轉檔中又拖進來的影片，會停在「等待中」，這一輪結束後要再按一次「開始轉檔」。
-//     （想要同一支影片的兩種版本：轉完一輪後改設定、再把影片拖進來、再按一次開始。）
+//     再按「開始轉檔」：**勾選的**影片都用「按下那一刻」的設定轉；沒勾的留著不動。
+//   - 已經轉完（或略過、失敗、取消）的影片也可以再勾選，用新的設定再轉一次（舊的輸出檔保留，新的另存一個檔）。
+//     轉過的影片會自動取消勾選，避免下一輪不小心又轉一次。
+//   - 每一列會依「目前的」目標幀率和輸出畫質，顯示原檔大小和預估轉完的大小，改設定就會跟著更新。
+//   - 轉檔中「開始轉檔」不能按；這時新拖進來的影片會停在「等待中」，這一輪結束後再勾選、再按一次。
 //   - 「輸出位置」選過的資料夾會記住（存在 App 的偏好設定裡），下次打開還在。
 //   - 一次只轉一支，其他的排隊等（同時轉好幾支反而會更慢）。
 //   - 轉好的檔案放在原影片旁邊（或選定的資料夾），檔名加上「_120fps」之類的字。原影片不會被修改。
@@ -27,7 +30,7 @@ struct FrameBoosterApp: App {
         WindowGroup("FrameBooster") {
             ContentView()
                 .environmentObject(queue)
-                .frame(minWidth: 640, minHeight: 560)
+                .frame(minWidth: 720, minHeight: 600)
         }
     }
 }
@@ -76,7 +79,12 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     @Published var status: Status = .waiting
     @Published var output: URL?
     @Published var seconds: Double = 0
+    @Published var isChecked = true         // 勾選框；新加入的預設勾選
+    @Published var basics: VideoBasics?     // 預估檔案大小用的影片資料（加入後在背景讀取）
     init(input: URL) { self.input = input }
+
+    /// 可以勾選（＝可以被這一輪轉換）的狀態：還沒開始的，或已經結束的（可以再轉一次）
+    var isSelectable: Bool { status == .waiting || isFinished }
 
     var isFinished: Bool {
         switch status {
@@ -121,13 +129,47 @@ final class JobQueue: ObservableObject {
 
     /// 還沒按開始的影片數
     var waitingCount: Int { jobs.filter { $0.status == .waiting }.count }
+    /// 勾選、而且可以轉的影片數（「開始轉檔」會轉這些）
+    var checkedCount: Int { jobs.filter { $0.isChecked && $0.isSelectable }.count }
+    /// 有沒有可以勾選的影片（決定要不要顯示「全選／全不選」）
+    var hasSelectable: Bool { jobs.contains { $0.isSelectable } }
+    /// 上一次點勾選框的那一列，給 Shift 連選用
+    private var lastToggledID: UUID?
     /// 有沒有已結束（可以清除）的工作
     var hasFinished: Bool { jobs.contains { $0.isFinished } }
 
     /// 拖進來或選進來的影片：先放在「等待中」，按「開始轉檔」才會開始。
     func add(_ urls: [URL]) {
         let videos = urls.flatMap { Self.expand($0) }
-        jobs.append(contentsOf: videos.map { Job(input: $0) })
+        let newJobs = videos.map { Job(input: $0) }
+        jobs.append(contentsOf: newJobs)
+        // 在背景讀取每支影片的基本資料，讀到後每一列就能顯示原檔大小和預估大小
+        for job in newJobs {
+            let url = job.input
+            Task.detached {
+                let basics = try? await FrameRateConverter.basics(for: url)
+                await MainActor.run { job.basics = basics }
+            }
+        }
+    }
+
+    /// 勾選或取消勾選一列。按住 Shift 時，從上一次點的那一列到這一列，整段都設成一樣。
+    func setChecked(_ job: Job, _ checked: Bool, extendRange: Bool) {
+        objectWillChange.send()
+        if extendRange, let lastID = lastToggledID,
+           let a = jobs.firstIndex(where: { $0.id == lastID }),
+           let b = jobs.firstIndex(where: { $0.id == job.id }) {
+            for j in jobs[min(a, b)...max(a, b)] where j.isSelectable { j.isChecked = checked }
+        } else {
+            job.isChecked = checked
+        }
+        lastToggledID = job.id
+    }
+
+    /// 「全選」／「全不選」：只影響可以勾選的列
+    func setAllChecked(_ checked: Bool) {
+        objectWillChange.send()
+        for j in jobs where j.isSelectable { j.isChecked = checked }
     }
 
     /// 拖進來的是資料夾時，改成加入資料夾裡（第一層）的所有影片。
@@ -142,15 +184,21 @@ final class JobQueue: ObservableObject {
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    /// 按下「開始轉檔」：把目前的設定套用到所有「等待中」的影片，排進這一輪並開始。
-    /// 這一輪還在轉時不能再按（轉檔中新加入的影片會留在「等待中」，等這一輪結束後再按一次）。
+    /// 按下「開始轉檔」：把目前的設定套用到所有「勾選」的影片（等待中的，或已結束要再轉一次的），排進這一輪並開始。
+    /// 排進去的影片會自動取消勾選。沒勾的留著不動。
+    /// 這一輪還在轉時不能再按（轉檔中新加入的影片會留在「等待中」，等這一輪結束後再勾選、再按一次）。
     func startRound() {
         guard !isRunning else { return }
         objectWillChange.send()
         let settings = JobSettings(targetFPS: targetFPS, highQuality: highQuality,
                                    outputQuality: outputQuality, outputDirectory: outputDirectory)
-        for job in jobs where job.status == .waiting {
+        for job in jobs where job.isChecked && job.isSelectable {
             job.settings = settings
+            job.progress = 0
+            job.remaining = nil
+            job.output = nil
+            job.seconds = 0
+            job.isChecked = false
             job.status = .queued
         }
         startNext()
@@ -208,7 +256,7 @@ final class JobQueue: ObservableObject {
 
     /// 從清單移除一支還沒開始、或已經結束的影片（不會刪除任何檔案）。
     func remove(_ job: Job) {
-        guard job.status == .waiting || job.isFinished else { return }
+        guard job.isSelectable else { return }
         jobs.removeAll { $0.id == job.id }
     }
 
@@ -294,14 +342,14 @@ struct ContentView: View {
                     queue.startRound()
                 } label: {
                     Text(queue.isRunning ? "轉檔中…"
-                         : queue.waitingCount > 0 ? "開始轉檔（\(queue.waitingCount) 支）" : "開始轉檔")
+                         : queue.checkedCount > 0 ? "開始轉檔（已勾選 \(queue.checkedCount) 支）" : "開始轉檔")
                         .frame(minWidth: 120)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
-                .disabled(queue.isRunning || queue.waitingCount == 0)
-                .help("用目前的目標幀率、輸出位置和進階設定，開始轉換所有「等待中」的影片。")
+                .disabled(queue.isRunning || queue.checkedCount == 0)
+                .help("用目前的目標幀率、輸出位置和進階設定，轉換所有「勾選」的影片（沒勾的不會轉）。")
                 Spacer()
                 Button("取消轉檔") { queue.cancelRound() }
                     .disabled(!queue.isRunning)
@@ -311,7 +359,7 @@ struct ContentView: View {
                     .help("把已完成、略過、失敗、取消的影片從清單拿掉（不會刪除任何檔案）。")
             }
             if queue.isRunning && queue.waitingCount > 0 {
-                Text("轉檔中新加入的 \(queue.waitingCount) 支影片，會在這一輪結束後，再按一次「開始轉檔」才開始。")
+                Text("轉檔中新加入的 \(queue.waitingCount) 支影片，會在這一輪結束後，勾選後再按一次「開始轉檔」才開始。")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -322,6 +370,16 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             } else {
+                if queue.hasSelectable {
+                    HStack(spacing: 8) {
+                        Button("全選") { queue.setAllChecked(true) }
+                        Button("全不選") { queue.setAllChecked(false) }
+                        Text("小技巧：勾一支後，按住 Shift 再勾另一支，中間整段都會勾起來")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .controlSize(.small)
+                }
                 List(queue.jobs) { job in JobRow(job: job) }
                     .listStyle(.inset)
             }
@@ -384,15 +442,33 @@ struct ContentView: View {
 
 struct JobRow: View {
     @ObservedObject var job: Job
+    @EnvironmentObject var queue: JobQueue   // 讀目前的目標幀率和輸出畫質，算預估大小
+
+    /// 檔案大小的顯示方式，例如「85.3 MB」「1.2 GB」
+    private static let sizeFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // 勾選框：只有「等待中」或「已結束（可以再轉一次）」的可以勾；按住 Shift 可以連選一整段
+            Toggle("", isOn: Binding(
+                get: { job.isChecked && job.isSelectable },
+                set: { queue.setChecked(job, $0, extendRange: NSEvent.modifierFlags.contains(.shift)) }))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .disabled(!job.isSelectable)
+                .help(job.isSelectable ? "勾選的影片，按「開始轉檔」時會用目前的設定轉換。按住 Shift 再勾，可以一次勾一整段。"
+                                       : "排隊中或轉檔中的影片不能勾選")
             statusIcon.frame(width: 20)
             VStack(alignment: .leading, spacing: 4) {
                 Text(job.input.lastPathComponent).lineLimit(1).truncationMode(.middle)
                 switch job.status {
                 case .waiting:
-                    Text("等待中（按「開始轉檔」後開始）").font(.caption).foregroundStyle(.secondary)
+                    Text(job.isChecked ? "等待中（已勾選，按「開始轉檔」後開始）" : "等待中（沒有勾選，不會轉）")
+                        .font(.caption).foregroundStyle(.secondary)
                 case .queued:
                     Text("排隊中　\(job.settings?.text ?? "")").font(.caption).foregroundStyle(.secondary)
                 case .running:
@@ -411,19 +487,47 @@ struct JobRow: View {
                 case .cancelled:
                     Text("已取消").font(.caption).foregroundStyle(.secondary)
                 }
+                if let line = sizeLine {
+                    Text(line).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
             }
             Spacer()
             if job.status == .done, let out = job.output {
                 Button("在 Finder 中顯示") { NSWorkspace.shared.activateFileViewerSelecting([out]) }
             }
-            if job.status == .waiting || job.isFinished {
-                Button { JobQueue.shared.remove(job) } label: { Image(systemName: "xmark") }
+            if job.isSelectable {
+                Button { queue.remove(job) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                     .help("從清單移除（不會刪除任何檔案）")
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// 每一列的大小資訊：
+    ///   - 等待中：依「目前的」目標幀率和輸出畫質預估（改設定會即時更新）
+    ///   - 已結束、而且又勾選要再轉：一樣顯示預估
+    ///   - 排隊中／轉檔中：依這一輪套用的設定預估
+    private var sizeLine: String? {
+        guard let b = job.basics else { return job.status == .waiting ? "讀取影片資訊中…" : nil }
+        let original = Self.sizeFormatter.string(fromByteCount: b.fileBytes)
+        let fps: Int32, quality: OutputQuality
+        switch job.status {
+        case .waiting:
+            fps = queue.targetFPS; quality = queue.outputQuality
+        case .queued, .running:
+            guard let st = job.settings else { return nil }
+            fps = st.targetFPS; quality = st.outputQuality
+        default:
+            guard job.isChecked else { return nil }
+            fps = queue.targetFPS; quality = queue.outputQuality
+        }
+        if b.wouldSkip(targetFPS: fps) {
+            return String(format: "原檔 %@・已經是 %.0f FPS，轉成 %ld FPS 會略過", original, b.nominalFPS, Int(fps))
+        }
+        let est = Self.sizeFormatter.string(fromByteCount: b.estimatedBytes(targetFPS: fps, quality: quality))
+        return "原檔 \(original) → 預估約 \(est)（\(fps) FPS・\(quality.displayName)畫質，實際可能小一些）"
     }
 
     @ViewBuilder private var statusIcon: some View {

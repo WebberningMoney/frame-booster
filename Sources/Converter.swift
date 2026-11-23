@@ -12,6 +12,9 @@
 //      剛好落在原始畫面上的格子直接用原圖，中間的格子交給 AI 補出來。
 //   3. AVAssetWriter 把所有畫面壓成 HEVC（H.265）存成 .mov；聲音原封不動複製過去。
 //   原始影片只會被讀取，絕不會被修改或刪除。
+//
+// 另外提供 VideoBasics：快速讀出影片長度、資料量等，讓畫面在轉檔前先「預估轉好後的大小」；
+// 預估和實際壓縮用的是同一個位元率公式（videoBitrate）。
 
 import Foundation
 import AVFoundation
@@ -83,6 +86,27 @@ struct VideoInfo: CustomStringConvertible {
 //  （或有上鎖），所以用 @unchecked Sendable 告訴編譯器「這裡由我們自己負責」，避免一大堆警告。
 
 /// 可以被工作線共用的小盒子（只在同一條工作線上讀寫）。
+/// 預估檔案大小用的影片基本資料。
+struct VideoBasics {
+    let duration: Double        // 秒
+    let nominalFPS: Float
+    let videoDataRate: Double   // 原檔影像每秒多少 bit
+    let width: Int
+    let height: Int
+    let audioDataRate: Double   // 原檔聲音每秒多少 bit（聲音會原封不動複製）
+    let fileBytes: Int64        // 原檔大小
+
+    /// 用這組設定轉換時，會不會被「略過」（影片已經是目標幀率以上）
+    func wouldSkip(targetFPS: Int32) -> Bool { nominalFPS >= Float(targetFPS) - 0.5 }
+
+    /// 預估輸出檔大小（byte）。HEVC 編碼器遇到簡單的畫面常常用不到設定的位元率，所以實際檔案通常會比預估小一些。
+    func estimatedBytes(targetFPS: Int32, quality: OutputQuality) -> Int64 {
+        let video = FrameRateConverter.videoBitrate(sourceDataRate: videoDataRate, width: width, height: height,
+                                                    nominalFPS: nominalFPS, targetFPS: targetFPS, quality: quality)
+        return Int64((video + audioDataRate) * duration / 8)
+    }
+}
+
 private final class Box<T>: @unchecked Sendable { var value: T; init(_ v: T) { value = v } }
 
 /// 影像這條工作線要用到的物件，包在一起交給它。
@@ -272,10 +296,8 @@ final class FrameRateConverter: @unchecked Sendable {
         }
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
 
-        let sourceBitrate = Double(dataRate) > 0 ? Double(dataRate) : Double(width * height) * 8
-        let frameRatio = Double(fps) / Double(max(nominalFPS, 1))
-        let bitrateFactor = max(1.5, frameRatio / 2) * options.outputQuality.bitrateMultiplier
-        let bitrate = Int(min(max(sourceBitrate * bitrateFactor, options.outputQuality.minimumBitrate), 300_000_000))
+        let bitrate = Int(Self.videoBitrate(sourceDataRate: Double(dataRate), width: width, height: height,
+                                            nominalFPS: nominalFPS, targetFPS: fps, quality: options.outputQuality))
         var compression: [String: Any] = [
             AVVideoAverageBitRateKey: bitrate,
             AVVideoExpectedSourceFrameRateKey: Int(fps),
@@ -471,6 +493,31 @@ final class FrameRateConverter: @unchecked Sendable {
     }
 
     /// 讀取影片資訊。畫面數是實際一張張數出來的（不解碼，所以很快），比檔案標示的幀率可靠。
+    /// 輸出影片的位元率（每秒多少 bit）。實際轉檔和「預估檔案大小」都用這一個算法，兩邊才會一致。
+    static func videoBitrate(sourceDataRate: Double, width: Int, height: Int,
+                             nominalFPS: Float, targetFPS: Int32, quality: OutputQuality) -> Double {
+        let source = sourceDataRate > 0 ? sourceDataRate : Double(width * height) * 8
+        let frameRatio = Double(targetFPS) / Double(max(nominalFPS, 1))
+        let factor = max(1.5, frameRatio / 2) * quality.bitrateMultiplier
+        return min(max(source * factor, quality.minimumBitrate), 300_000_000)
+    }
+
+    /// 讀取「預估檔案大小」需要的影片基本資料（只讀檔頭資訊，很快）。
+    static func basics(for url: URL) async throws -> VideoBasics {
+        let asset = AVURLAsset(url: url)
+        guard let v = try await asset.loadTracks(withMediaType: .video).first else { throw ConvertError("沒有影片軌") }
+        let (size, fps, rate) = try await v.load(.naturalSize, .nominalFrameRate, .estimatedDataRate)
+        let duration = try await asset.load(.duration)
+        var audioRate = 0.0
+        for a in try await asset.loadTracks(withMediaType: .audio) {
+            audioRate += Double(try await a.load(.estimatedDataRate))
+        }
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+        return VideoBasics(duration: max(duration.seconds, 0), nominalFPS: fps, videoDataRate: Double(rate),
+                           width: Int(size.width.rounded()), height: Int(size.height.rounded()),
+                           audioDataRate: audioRate, fileBytes: bytes)
+    }
+
     static func info(for url: URL) async throws -> VideoInfo {
         let asset = AVURLAsset(url: url)
         var info = VideoInfo()
