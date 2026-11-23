@@ -55,6 +55,9 @@ commit 時如果改了程式卻沒有動到任何文件，`pre-commit` 會擋下
 - 這個專案只能在 Mac（Apple 晶片、macOS 15.4 以上）上編譯和執行：AI 補幀、HEVC 壓縮都是 macOS 內建功能，
   雲端沙盒（Linux）**沒辦法編譯也沒辦法測試**。修改後要誠實說明「哪些已在 Mac 上驗證、哪些還沒有」，
   並請擁有者雙擊 `安裝.command`（會自動編譯＋自我測試），或讀取 `build/install_log.txt` 確認結果。
+- 擁有者的 Mac **只有「命令列開發者工具」，沒有完整 Xcode**：不要用需要 Xcode 外掛的 Swift 巨集
+  （SwiftUI 的 `@State`、`@Observable`、`@Bindable`、`#Preview` 等）。狀態請用 `ObservableObject`＋`@Published`＋`@StateObject`。
+  （0.1 版第一次實機編譯就是因為 `@State` 失敗。）
 - **絕不修改、覆蓋或刪除原始影片**。輸出一律寫成新檔（`原檔名_120fps.mov`），檔名重複時自動加上編號。
   轉檔失敗或取消時，只刪除這次做到一半的輸出檔。
 - **裝置清單有兩份要同步**：`Sources/App/FPSPresets.swift`（App 裡的選單與說明）和 README「FPS 選項與裝置對照」（含資料來源）。

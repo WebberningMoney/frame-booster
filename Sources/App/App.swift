@@ -37,7 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - 資料：每一支影片是一個 Job，JobQueue 負責排隊
 
-final class Job: ObservableObject, Identifiable {
+/// 一支影片的轉檔工作。內容只在主執行緒上修改（背景工作會用 MainActor.run／DispatchQueue.main 切回來），
+/// 所以標成 @unchecked Sendable，讓它可以被帶進背景工作而不產生警告。
+final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     enum Status: Equatable { case waiting, running, done, skipped(String), failed(String), cancelled }
     let id = UUID()
     let input: URL
@@ -133,9 +135,17 @@ final class JobQueue: ObservableObject {
 
 // MARK: - 畫面
 
+/// 拖放區的狀態（影片拖到上面時要變色）。
+/// 注意：這裡刻意不用 SwiftUI 的 `@State`。新版 SDK 的 `@State` 是「巨集」，編譯時需要只有完整 Xcode 才有的
+/// SwiftUIMacros 外掛；只裝「命令列開發者工具」會編譯失敗。改用 ObservableObject＋@StateObject 就沒有這個問題。
+final class DropState: ObservableObject {
+    @Published var targeted = false
+}
+
 struct ContentView: View {
     @EnvironmentObject var queue: JobQueue
-    @State private var dropTargeted = false
+    @StateObject private var drop = DropState()
+    private var dropTargeted: Bool { drop.targeted }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -200,7 +210,7 @@ struct ContentView: View {
                 .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
                 .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.5))
         )
-        .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted) { providers in
+        .onDrop(of: [UTType.fileURL], isTargeted: $drop.targeted) { providers in
             for p in providers {
                 _ = p.loadObject(ofClass: URL.self) { url, _ in
                     if let url { Task { @MainActor in JobQueue.shared.add([url]) } }

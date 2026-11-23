@@ -344,6 +344,8 @@ flowchart TD
 | 已達目標幀率就「略過」 | 降幀率不是這個工具的目的，也避免不小心產生比原檔差的檔案 |
 | 一次只轉一支 | 補幀和 HEVC 編碼都很吃硬體，同時轉多支不會比較快 |
 | 安裝時一定跑自我測試 | 這個專案無法在雲端沙盒測試，用測試影片在使用者的 Mac 上確認「真的轉得出來、幀率正確」才安裝。測 144 是為了檢查非整數倍的時間格線 |
+| 不用 SwiftUI 的巨集（`@State`、`@Observable`、`#Preview` 等） | 新版 SDK 裡這些是「巨集」，編譯時需要只有完整 Xcode 才有的 SwiftUIMacros 外掛；只裝「命令列開發者工具」會編譯失敗。改用 `ObservableObject`＋`@Published`＋`@StateObject`／`@EnvironmentObject` |
+| 跨工作線的物件標成 `@unchecked Sendable` | AVFoundation 的讀寫物件沒有標成可跨工作線（Sendable），但程式保證每個物件只在固定的一條工作線上使用；包進 `VideoPipe`／`AudioPipe` 再交給工作線，避免大量警告 |
 | 不做剪接點偵測（目前） | 120 FPS 下剪接點的殘影只有約 1/40 秒；之後若有需要再加 |
 
 ---

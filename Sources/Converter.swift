@@ -53,17 +53,47 @@ struct VideoInfo: CustomStringConvertible {
     }
 }
 
-private final class Box<T> { var value: T; init(_ v: T) { value = v } }
+// 關於「@unchecked Sendable」：
+//   影像和聲音在不同的工作線上同時處理，Swift 編譯器會檢查「被帶到別條工作線的東西是否安全」（Sendable）。
+//   AVFoundation 的讀寫物件沒有標成 Sendable，但這個程式保證每個物件只在固定的一條工作線上使用
+//  （或有上鎖），所以用 @unchecked Sendable 告訴編譯器「這裡由我們自己負責」，避免一大堆警告。
+
+/// 可以被工作線共用的小盒子（只在同一條工作線上讀寫）。
+private final class Box<T>: @unchecked Sendable { var value: T; init(_ v: T) { value = v } }
+
+/// 影像這條工作線要用到的物件，包在一起交給它。
+private final class VideoPipe: @unchecked Sendable {
+    let reader: AVAssetReader
+    let writer: AVAssetWriter
+    let input: AVAssetWriterInput
+    let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    let generator: FrameGenerator
+    init(reader: AVAssetReader, writer: AVAssetWriter, input: AVAssetWriterInput,
+         adaptor: AVAssetWriterInputPixelBufferAdaptor, generator: FrameGenerator) {
+        self.reader = reader; self.writer = writer; self.input = input
+        self.adaptor = adaptor; self.generator = generator
+    }
+}
+
+/// 一條聲音軌要用到的物件（每個聲音軌各一條工作線）。
+private final class AudioPipe: @unchecked Sendable {
+    let writer: AVAssetWriter
+    let output: AVAssetReaderTrackOutput
+    let input: AVAssetWriterInput
+    init(writer: AVAssetWriter, output: AVAssetReaderTrackOutput, input: AVAssetWriterInput) {
+        self.writer = writer; self.output = output; self.input = input
+    }
+}
 
 /// 記住「第一個發生的錯誤」。好幾條工作線同時在跑，所以要上鎖避免互相覆蓋。
-private final class FirstError {
+private final class FirstError: @unchecked Sendable {
     private let lock = NSLock()
     private var _value: Error?
     var value: Error? { lock.lock(); defer { lock.unlock() }; return _value }
     func set(_ e: Error) { lock.lock(); if _value == nil { _value = e }; lock.unlock() }
 }
 
-final class FrameRateConverter {
+final class FrameRateConverter: @unchecked Sendable {
     let inputURL: URL
     let options: ConvertOptions
     /// 進度回報（0～1），會在背景執行緒呼叫。
@@ -298,27 +328,28 @@ final class FrameRateConverter {
         group.enter()
         let videoQueue = DispatchQueue(label: "framebooster.video")
         let videoDone = Box(false)
+        let vp = VideoPipe(reader: reader, writer: writer, input: videoIn, adaptor: adaptor, generator: gen)
         videoIn.requestMediaDataWhenReady(on: videoQueue) { [self] in
             if videoDone.value { return }
-            func finish() {
+            let finish = {
                 if videoDone.value { return }
                 videoDone.value = true
-                videoIn.markAsFinished()
+                vp.input.markAsFinished()
                 group.leave()
             }
-            while videoIn.isReadyForMoreMediaData {
-                if self.isCancelled { failure.set(ConvertError("已取消")); reader.cancelReading(); finish(); return }
+            while vp.input.isReadyForMoreMediaData {
+                if self.isCancelled { failure.set(ConvertError("已取消")); vp.reader.cancelReading(); finish(); return }
                 do {
-                    guard let item = try gen.next() else { finish(); return }
+                    guard let item = try vp.generator.next() else { finish(); return }
                     let (buffer, time) = item
-                    if !adaptor.append(buffer, withPresentationTime: time) {
-                        failure.set(writer.error ?? ConvertError("寫入影格失敗"))
-                        reader.cancelReading(); finish(); return
+                    if !vp.adaptor.append(buffer, withPresentationTime: time) {
+                        failure.set(vp.writer.error ?? ConvertError("寫入影格失敗"))
+                        vp.reader.cancelReading(); finish(); return
                     }
-                    let p = min(max((time - gen.origin).seconds / totalSeconds, 0), 1)
+                    let p = min(max((time - vp.generator.origin).seconds / totalSeconds, 0), 1)
                     if p - lastReported.value >= 0.005 { lastReported.value = p; self.progressHandler?(p) }
                 } catch {
-                    failure.set(error); reader.cancelReading(); finish(); return
+                    failure.set(error); vp.reader.cancelReading(); finish(); return
                 }
             }
         }
@@ -328,18 +359,19 @@ final class FrameRateConverter {
             audioGroup.enter()
             let q = DispatchQueue(label: "framebooster.audio.\(i)")
             let done = Box(false)
+            let ap = AudioPipe(writer: writer, output: out, input: input)
             input.requestMediaDataWhenReady(on: q) {
                 if done.value { return }
-                while input.isReadyForMoreMediaData {
-                    if writer.status != .writing {
+                while ap.input.isReadyForMoreMediaData {
+                    if ap.writer.status != .writing {
                         done.value = true; audioGroup.leave(); return
                     }
-                    if let sb = out.copyNextSampleBuffer() {
-                        if !input.append(sb) {
-                            done.value = true; input.markAsFinished(); audioGroup.leave(); return
+                    if let sb = ap.output.copyNextSampleBuffer() {
+                        if !ap.input.append(sb) {
+                            done.value = true; ap.input.markAsFinished(); audioGroup.leave(); return
                         }
                     } else {
-                        done.value = true; input.markAsFinished(); audioGroup.leave(); return
+                        done.value = true; ap.input.markAsFinished(); audioGroup.leave(); return
                     }
                 }
             }
@@ -448,7 +480,7 @@ final class FrameRateConverter {
 ///   - 格子在 a、b 中間 → 算出位置比例（例如 0.25、0.5、0.75），請 AI 補出那一刻的畫面。
 ///   - a、b 相隔太久（超過 maxGap）→ 不補，延續 a。
 /// 用時間來算比例，所以 29.97 FPS、幀率忽快忽慢的手機影片也能對齊。
-final class FrameGenerator {
+final class FrameGenerator: @unchecked Sendable {
     private let fps: Int32
     private let maxGap: Double
     private let fallbackDuration: Double
