@@ -31,7 +31,9 @@ struct ConvertOptions {
 
 struct ConvertError: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    /// true＝不是出錯，而是「不需要轉」（例如影片已經是目標幀率以上），畫面上顯示成「略過」。
+    let isSkip: Bool
+    init(_ message: String, isSkip: Bool = false) { self.message = message; self.isSkip = isSkip }
     var errorDescription: String? { message }
 }
 
@@ -117,7 +119,7 @@ final class FrameRateConverter {
         let width = Int(naturalSize.width.rounded()), height = Int(naturalSize.height.rounded())
 
         if nominalFPS >= Float(fps) - 0.5 {
-            throw ConvertError(String(format: "這支影片已經是 %.0f FPS，不需要轉換。", nominalFPS))
+            throw ConvertError(String(format: "這支影片已經是 %.0f FPS，不需要轉成 %ld FPS。", nominalFPS, Int(fps)), isSkip: true)
         }
 
         // ---- 原始影片的色彩資訊：iPhone 拍的 HDR 要維持 HDR（10-bit），一般影片用 8-bit ----
@@ -194,7 +196,9 @@ final class FrameRateConverter {
         guard reader.canAdd(videoOut) else { throw ConvertError("無法解碼這支影片。") }
         reader.add(videoOut)
 
-        // ---- 寫入器：HEVC 壓縮，位元率約為原檔 2 倍（畫面變 4 倍，但補出來的畫面很好壓縮） ----
+        // ---- 寫入器：HEVC 壓縮。位元率依「畫面變成幾倍」調整：
+        //      倍數 ÷ 2，最少 1.5 倍（30→60 約 1.5 倍、→120 約 2 倍、→144 約 2.4 倍、→240 約 4 倍）。
+        //      補出來的畫面和前後很像、很好壓縮，所以不需要跟著畫面數等比例增加。 ----
         let outURL = options.outputURL ?? Self.defaultOutputURL(for: inputURL, fps: fps)
         if FileManager.default.fileExists(atPath: outURL.path) {
             try FileManager.default.removeItem(at: outURL)
@@ -202,7 +206,9 @@ final class FrameRateConverter {
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
 
         let sourceBitrate = Double(dataRate) > 0 ? Double(dataRate) : Double(width * height) * 8
-        let bitrate = Int(min(max(sourceBitrate * 2.0, 6_000_000), 250_000_000))
+        let frameRatio = Double(fps) / Double(max(nominalFPS, 1))
+        let bitrateFactor = max(1.5, frameRatio / 2)
+        let bitrate = Int(min(max(sourceBitrate * bitrateFactor, 6_000_000), 300_000_000))
         var compression: [String: Any] = [
             AVVideoAverageBitRateKey: bitrate,
             AVVideoExpectedSourceFrameRateKey: Int(fps),

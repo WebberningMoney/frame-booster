@@ -30,7 +30,7 @@ APP="build/FrameBooster.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-xcrun swiftc "${FLAGS[@]}" -parse-as-library Sources/Converter.swift Sources/App/App.swift \
+xcrun swiftc "${FLAGS[@]}" -parse-as-library Sources/Converter.swift Sources/App/*.swift \
     -o "$APP/Contents/MacOS/FrameBooster"
 
 # 圖示：把 assets/AppIcon.iconset 裡的圖片組成 macOS 用的 .icns。失敗也不影響使用。

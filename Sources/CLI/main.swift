@@ -13,7 +13,7 @@ let usage = """
   frame-booster [--fps 120] [--fast] [-o 輸出檔.mov] 影片1 [影片2 ...]
   frame-booster --info 影片...
 
-  --fps N     目標幀率（預設 120）
+  --fps N     目標幀率（預設 120；常用 60、120、144、240）
   --fast      速度優先（預設是品質優先）
   -o PATH     輸出檔名（只能用在單一影片）；預設在原檔旁邊產生「原檔名_120fps.mov」
   --info      只顯示影片資訊（解析度、幀率、畫面數）
@@ -79,6 +79,8 @@ for (n, url) in inputs.enumerated() {
     do {
         let out = try await conv.run()
         printErr(String(format: "\n✅ 完成（%.1f 秒）：%@", Date().timeIntervalSince(start), out.path))
+    } catch let e as ConvertError where e.isSkip {
+        printErr("\n⏭ 略過 \(url.lastPathComponent)：\(e.message)")
     } catch {
         printErr("\n❌ \(url.lastPathComponent)：\(error.localizedDescription)")
         failures += 1
