@@ -248,7 +248,7 @@ git clone https://github.com/WebberningMoney/frame-booster.git
 > 💡 iPhone 開著**低耗電模式**時，螢幕可能會限制在 60Hz，就看不出 120 FPS 的差別。
 
 **為什麼不會變成慢動作？** iPhone 的「照片」看到 120 FPS 以上的影片，預設會當成「慢動作」：頭尾正常、中間放慢（Mac 的 QuickTime Player 也一樣）。
-FrameBooster 轉出來的影片會加上一個 Apple 定義的標記「用原本的幀率正常播放」（iPhone 自己拍的一般影片也有這個標記），所以應該會直接用正常速度播放。
+FrameBooster 轉出來的影片會加上一個 Apple 定義的標記「用原本的幀率正常播放」（iPhone 自己拍的一般影片也有這個標記），作者已在 iPhone 17 Pro 上確認：用 AirDrop 傳過去後，「照片」會直接用正常速度播放。
 如果還是變慢動作（例如是舊版 FrameBooster 轉的影片）：在「照片」按「編輯」→ 右上角的速度圖示 → 選「**100%**」，或用新版重新轉一次。
 
 **Android 手機**：用 USB 線、Google 雲端硬碟或 Quick Share 等方式傳過去。大多數新款 Android 手機都能播 HEVC（H.265）的 `.mov`；如果播不了，可能是那支手機的播放器不支援，可以試試 VLC。

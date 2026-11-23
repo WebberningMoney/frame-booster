@@ -327,7 +327,7 @@ flowchart LR
 | 影像編碼 | HEVC（H.265），硬體編碼 | 檔案小、Apple 裝置都能硬體解碼 |
 | 位元率（`videoBitrate`） | 原檔 ×（畫面倍數 ÷ 2，最少 1.5）× 輸出畫質倍數（高 1.5／標準 1／省空間 0.6）；最低 8／6／3 Mbps、最高 300 Mbps | 補出來的畫面和前後很像，很好壓縮，不需要跟畫面數等比例增加。倍數還沒有在實機上調校過。畫面上的「預估大小」也用同一個公式：（影像位元率＋聲音位元率）× 長度 ÷ 8 |
 | 關鍵畫面間隔 | 每 2 秒一張 | 拖動進度條時反應比較快 |
-| 播放標記 | QuickTime 影片資訊 `com.apple.quicktime.full-frame-rate-playback-intent` = 1（`AVMetadataKey.quickTimeMetadataKeyFullFrameRatePlaybackIntent`，iOS 18／macOS 15 起） | 沒有這個標記時，iPhone「照片」和 QuickTime Player 會把 120 FPS 以上的影片當慢動作、中間放慢播放 |
+| 播放標記 | QuickTime 影片資訊 `com.apple.quicktime.full-frame-rate-playback-intent` = 1（`AVMetadataKey.quickTimeMetadataKeyFullFrameRatePlaybackIntent`，iOS 18／macOS 15 起） | 沒有這個標記時，iPhone「照片」和 QuickTime Player 會把 120 FPS 以上的影片當慢動作、中間放慢播放。已在 iPhone 17 Pro 上確認加了標記後會用正常速度播放 |
 | 方向 | 沿用原檔的旋轉設定 | 直拍的手機影片不會變橫的 |
 | 位置與檔名 | 原影片旁邊或選定的資料夾；`原檔名_<幀率>fps.mov`，重複時加「 2」「 3」… | 絕不覆蓋任何檔案；輸出檔和原影片是同一個檔案時直接拒絕 |
 
@@ -425,7 +425,6 @@ flowchart TD
 - HDR 影片轉完是否仍是 HDR、在 iPhone 上播放是否正常
 - 聲音是否同步
 - 直拍影片方向是否正確
-- 加上「正常速度播放」標記後，iPhone「照片」是否真的不再當成慢動作
 - 預估大小和實際檔案差多少（目前只量過一支 720p 影片，多約 2%）
 - 下拉選單的滑鼠停留說明（每個選項各自的說明能不能顯示）
 - 拖放、Dock 圖示拖放、「在 Finder 中顯示」
