@@ -7,6 +7,8 @@
 #   2. 實際幀率（畫面數 ÷ 長度）約等於目標
 #   3. 聲音還在
 #   4. 有「用原本的幀率正常播放」標記（iPhone「照片」才不會當成慢動作）
+# 另外試轉一支 VP9 格式的影片（test/sample_vp9.mp4，網站下載的影片常見這種格式），
+# 只顯示「讀得了／讀不了」，不影響安裝（有些 Mac 可能本來就不支援）。
 # 最後印出每一種花了幾秒（第一次轉檔包含 AI 引擎載入的時間，所以先轉 60 當暖身）。
 
 cd "$(dirname "$0")/.."
@@ -78,6 +80,17 @@ check 60          # 2 倍（也當作 AI 引擎的暖身）
 check 120         # 預設：剛好 4 倍
 check 144         # 4.8 倍：不是整數倍，檢查「依時間對齊」的算法
 check 120 fast    # 補幀方式「快速」，和上面的 120「精細」比較速度
+
+# VP9 影片：只報告結果，不影響安裝
+echo ""
+echo "── 測試：VP9 格式的影片（網站下載的 .mp4 常見）──"
+VP9OUT="build/selftest_vp9_60fps.mov"
+rm -f "$VP9OUT"
+if "$BIN" "test/sample_vp9.mp4" --fps 60 -o "$VP9OUT" >/dev/null 2>&1 && vp9info=$("$BIN" --info "$VP9OUT"); then
+    echo "✔ VP9：可以讀取並轉檔（結果：$(field frames "$vp9info") 張畫面）"
+else
+    echo "⚠️ VP9：這台 Mac 讀不了 VP9 影片（不影響安裝；這種影片需要先用 HandBrake 轉成 H.264／H.265）"
+fi
 
 echo ""
 echo "速度參考（4 秒 1080p 測試影片，這台 Mac）："

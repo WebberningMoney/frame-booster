@@ -12,6 +12,7 @@
 //      剛好落在原始畫面上的格子直接用原圖，中間的格子交給 AI 補出來。
 //   3. AVAssetWriter 把所有畫面壓成 HEVC（H.265）存成 .mov；聲音原封不動複製過去。
 //   原始影片只會被讀取，絕不會被修改或刪除。
+//   也能讀 VP9 格式的影片（網站下載的 .mp4 常見）：程式會先打開 macOS 內建、預設沒啟用的 VP9 解碼器。
 //   輸出檔會標上「用原本的幀率正常播放」，避免 iPhone「照片」把 120 FPS 影片當成慢動作。
 //
 // 另外提供 VideoBasics：快速讀出影片長度、資料量等，讓畫面在轉檔前先「預估轉好後的大小」；
@@ -74,6 +75,24 @@ struct VideoInfo: CustomStringConvertible {
     var codec = ""
     var audioTracks = 0
     var transfer = ""
+    /// 打開 macOS 內建、但預設沒有啟用的影片解碼器（目前是 VP9）。
+    /// VP9 是 Google 的影片格式，網站下載的 .mp4 有時候是這種格式。Apple 晶片的 Mac 有能力解 VP9，
+    /// 但 App 要先呼叫 VTRegisterSupplementalVideoDecoderIfAvailable 開啟（Safari、Firefox、FFmpeg 也是這樣做）。
+    /// 重複呼叫沒有關係；不支援的電腦上什麼事都不會發生。
+    static func enableExtraDecoders() {
+        VTRegisterSupplementalVideoDecoderIfAvailable(CMVideoCodecType(0x7670_3039))   // 'vp09'
+    }
+
+    /// 如果影片是網站常用、但 Mac 不一定能讀的格式（VP9、VP8、AV1），回傳它的名字；其他格式回傳 nil。
+    static func webCodecName(_ fd: CMFormatDescription) -> String? {
+        switch CMFormatDescriptionGetMediaSubType(fd) {
+        case 0x7670_3039: return "VP9"   // 'vp09'
+        case 0x7670_3038: return "VP8"   // 'vp08'
+        case 0x6176_3031: return "AV1"   // 'av01'
+        default: return nil
+        }
+    }
+
     /// 「用原本的幀率正常播放」標記：1＝正常速度、0＝慢動作、-1＝沒有標記
     var fullFrameRate = -1
     var measuredFPS: Double { duration > 0 ? Double(frameCount) / duration : 0 }
@@ -185,6 +204,7 @@ final class FrameRateConverter: @unchecked Sendable {
         defer { ProcessInfo.processInfo.endActivity(activity) }
 
         let fps = options.targetFPS
+        Self.enableExtraDecoders()
         let asset = AVURLAsset(url: inputURL)
 
         let videoTracks: [AVAssetTrack]
@@ -364,7 +384,12 @@ final class FrameRateConverter: @unchecked Sendable {
         }
 
         guard reader.startReading() else {
-            throw ConvertError("無法開始讀取影片：\(reader.error?.localizedDescription ?? "未知錯誤")")
+            let reason = reader.error?.localizedDescription ?? "未知錯誤"
+            if let name = formatDescs.first.flatMap(Self.webCodecName) {
+                throw ConvertError("這支影片的畫面是 \(name) 格式（常見於從網站下載的影片），這台 Mac 沒辦法讀取。"
+                                   + "可以先用免費的 HandBrake 把它轉成 H.264 或 H.265 的 MP4，再拖進來。（\(reason)）")
+            }
+            throw ConvertError("無法開始讀取影片：\(reason)")
         }
         guard writer.startWriting() else {
             throw ConvertError("無法開始寫入：\(writer.error?.localizedDescription ?? "未知錯誤")")
@@ -538,6 +563,7 @@ final class FrameRateConverter: @unchecked Sendable {
     }
 
     static func info(for url: URL) async throws -> VideoInfo {
+        enableExtraDecoders()
         let asset = AVURLAsset(url: url)
         var info = VideoInfo()
         guard let v = try await asset.loadTracks(withMediaType: .video).first else { throw ConvertError("沒有影片軌") }

@@ -53,7 +53,7 @@ flowchart LR
 | **SwiftUI** | Apple 用「描述畫面長怎樣」來寫介面的框架 | 視窗、下拉選單、進度條、拖放 | `App.swift` |
 | **AppKit** | macOS 傳統的介面框架 | 開檔視窗（`NSOpenPanel`）、在 Finder 中顯示（`NSWorkspace`）、Dock 拖放（`NSApplicationDelegate`） | `App.swift` |
 | **AVFoundation** | Apple 的影音框架 | 讀影片（`AVAssetReader`）、寫影片（`AVAssetWriter`）、讀資訊（`AVURLAsset`） | `Converter.swift` |
-| **VideoToolbox** | 底層的影片硬體加速框架 | **AI 補幀**（`VTFrameProcessor`）、畫面格式複製（`VTPixelTransferSession`）、HEVC 硬體編碼 | `Converter.swift` |
+| **VideoToolbox** | 底層的影片硬體加速框架 | **AI 補幀**（`VTFrameProcessor`）、畫面格式複製（`VTPixelTransferSession`）、HEVC 硬體編碼、打開內建的 VP9 解碼器（`VTRegisterSupplementalVideoDecoderIfAvailable`） | `Converter.swift` |
 | **CoreVideo**／**CoreMedia** | 畫面記憶體與時間的基本型別 | 畫面記憶體池（`CVPixelBufferPool`、IOSurface）、精確時間（`CMTime`） | `Converter.swift` |
 | **UserDefaults** | macOS 的 App 偏好設定 | 記住使用者選的輸出資料夾 | `App.swift` |
 | **Swift Concurrency** | `async`／`await` 非同步寫法 | 讀影片資訊、整個轉檔流程、等寫入完成 | `run()`、`App.swift` |
@@ -308,6 +308,12 @@ flowchart LR
 
 ## 8. 色彩、HDR、聲音、輸出設定
 
+**可以讀哪些影片**
+
+- 由 AVFoundation 讀取：`.mov`、`.mp4`、`.m4v` 裡的 H.264、HEVC 等 Apple 支援的格式。
+- **VP9**（網站下載的 .mp4 常見）：macOS 有內建 VP9 解碼器，但預設沒有啟用，要先呼叫 `VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9)`（Safari、Firefox、FFmpeg 也是這樣做）。程式在讀影片前都會先呼叫一次。
+- 讀不了時（例如 M1／M2 上的 AV1），用 `webCodecName` 認出格式，顯示白話的錯誤訊息和處理方法。
+
 **色彩與 HDR**
 
 - 讀取原始影片的色彩標記（色域、轉換曲線、矩陣）。
@@ -364,7 +370,7 @@ flowchart TD
 | `Resources/Info.plist` | App 的名稱、版本、最低系統版本（15.4）、圖示、可以接受拖放影片 |
 | `assets/AppIcon.iconset` | 圖示原始圖片，編譯時用 `iconutil` 組成 `.icns` |
 | `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc）；App 先在系統暫存資料夾組裝、簽章再搬回來 |
-| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音、「正常速度播放」標記，最後印出各花幾秒 |
+| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音、「正常速度播放」標記，最後印出各花幾秒；再試轉 `test/sample_vp9.mp4`，只報告 VP9 讀不讀得了（不影響安裝） |
 | `scripts/docs/make_mockups.py` | 產生 README 的示意圖（`docs/images/`） |
 | `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片（符合 macOS 26 的圓角方形規格） |
 | `scripts/git-hooks/` | commit／push 前的自動檢查 |
@@ -425,6 +431,7 @@ flowchart TD
 - HDR 影片轉完是否仍是 HDR、在 iPhone 上播放是否正常
 - 聲音是否同步
 - 直拍影片方向是否正確
+- 打開 VP9 解碼器後，`AVAssetReader` 是否真的能讀 VP9 的 .mp4（自我測試會報告）
 - 預估大小和實際檔案差多少（目前只量過一支 720p 影片，多約 2%）
 - 下拉選單的滑鼠停留說明（每個選項各自的說明能不能顯示）
 - 拖放、Dock 圖示拖放、「在 Finder 中顯示」
