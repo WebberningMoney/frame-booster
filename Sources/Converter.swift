@@ -75,24 +75,6 @@ struct VideoInfo: CustomStringConvertible {
     var codec = ""
     var audioTracks = 0
     var transfer = ""
-    /// 打開 macOS 內建、但預設沒有啟用的影片解碼器（目前是 VP9）。
-    /// VP9 是 Google 的影片格式，網站下載的 .mp4 有時候是這種格式。Apple 晶片的 Mac 有能力解 VP9，
-    /// 但 App 要先呼叫 VTRegisterSupplementalVideoDecoderIfAvailable 開啟（Safari、Firefox、FFmpeg 也是這樣做）。
-    /// 重複呼叫沒有關係；不支援的電腦上什麼事都不會發生。
-    static func enableExtraDecoders() {
-        VTRegisterSupplementalVideoDecoderIfAvailable(CMVideoCodecType(0x7670_3039))   // 'vp09'
-    }
-
-    /// 如果影片是網站常用、但 Mac 不一定能讀的格式（VP9、VP8、AV1），回傳它的名字；其他格式回傳 nil。
-    static func webCodecName(_ fd: CMFormatDescription) -> String? {
-        switch CMFormatDescriptionGetMediaSubType(fd) {
-        case 0x7670_3039: return "VP9"   // 'vp09'
-        case 0x7670_3038: return "VP8"   // 'vp08'
-        case 0x6176_3031: return "AV1"   // 'av01'
-        default: return nil
-        }
-    }
-
     /// 「用原本的幀率正常播放」標記：1＝正常速度、0＝慢動作、-1＝沒有標記
     var fullFrameRate = -1
     var measuredFPS: Double { duration > 0 ? Double(frameCount) / duration : 0 }
@@ -385,7 +367,7 @@ final class FrameRateConverter: @unchecked Sendable {
 
         guard reader.startReading() else {
             let reason = reader.error?.localizedDescription ?? "未知錯誤"
-            if let name = formatDescs.first.flatMap(Self.webCodecName) {
+            if let fd = formatDescs.first, let name = Self.webCodecName(fd) {
                 throw ConvertError("這支影片的畫面是 \(name) 格式（常見於從網站下載的影片），這台 Mac 沒辦法讀取。"
                                    + "可以先用免費的 HandBrake 把它轉成 H.264 或 H.265 的 MP4，再拖進來。（\(reason)）")
             }
@@ -549,6 +531,24 @@ final class FrameRateConverter: @unchecked Sendable {
         return VideoBasics(duration: max(duration.seconds, 0), nominalFPS: fps, videoDataRate: Double(rate),
                            width: Int(size.width.rounded()), height: Int(size.height.rounded()),
                            audioDataRate: audioRate, fileBytes: bytes)
+    }
+
+    /// 打開 macOS 內建、但預設沒有啟用的影片解碼器（目前是 VP9）。
+    /// VP9 是 Google 的影片格式，網站下載的 .mp4 有時候是這種格式。Apple 晶片的 Mac 有能力解 VP9，
+    /// 但 App 要先呼叫 VTRegisterSupplementalVideoDecoderIfAvailable 開啟（Safari、Firefox、FFmpeg 也是這樣做）。
+    /// 重複呼叫沒有關係；不支援的電腦上什麼事都不會發生。
+    static func enableExtraDecoders() {
+        VTRegisterSupplementalVideoDecoderIfAvailable(CMVideoCodecType(0x7670_3039))   // 'vp09'
+    }
+
+    /// 如果影片是網站常用、但 Mac 不一定能讀的格式（VP9、VP8、AV1），回傳它的名字；其他格式回傳 nil。
+    static func webCodecName(_ fd: CMFormatDescription) -> String? {
+        switch CMFormatDescriptionGetMediaSubType(fd) {
+        case 0x7670_3039: return "VP9"   // 'vp09'
+        case 0x7670_3038: return "VP8"   // 'vp08'
+        case 0x6176_3031: return "AV1"   // 'av01'
+        default: return nil
+        }
     }
 
     /// 「用原本的幀率正常播放」標記（Apple 從 iOS 18／macOS 15 起支援的 QuickTime 影片資訊）。
