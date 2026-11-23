@@ -1,0 +1,29 @@
+#!/bin/bash
+# pre-push — push 之前再檢查一次：要推上去的每個 commit，作者都必須是專案擁有者，而且沒有簽章。
+# （commit 前的檢查可能被略過，所以推送前再擋一次。）
+
+owner=$(git config framebooster.owneremail)
+[ -z "$owner" ] && exit 0
+zero=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue   # 刪除分支，不用檢查
+    if [ "$remote_sha" = "$zero" ]; then
+        range=$(git rev-list "$local_sha" --not --remotes)
+    else
+        range=$(git rev-list "$remote_sha..$local_sha")
+    fi
+    for c in $range; do
+        ae=$(git log -1 --format=%ae "$c")
+        sig=$(git log -1 --format=%G? "$c")
+        if [ "$ae" != "$owner" ]; then
+            echo "❌ commit $(git log -1 --format='%h %s' "$c") 的作者是 $ae，不是專案擁有者 $owner。"
+            exit 1
+        fi
+        if [ "$sig" != "N" ]; then
+            echo "❌ commit $(git log -1 --format='%h %s' "$c") 有簽章（狀態 $sig），推上去會顯示 Unverified。"
+            exit 1
+        fi
+    done
+done
+exit 0

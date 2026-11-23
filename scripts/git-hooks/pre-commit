@@ -1,0 +1,29 @@
+#!/bin/bash
+# pre-commit — commit 之前的自動檢查（啟用方式見 CLAUDE.md）：
+#   1. 作者必須是專案擁有者（避免 AI 助理的沙盒身分被當成作者）
+#   2. 不可以自動簽章（沙盒的金鑰不在擁有者的 GitHub 帳號上，會被標成 Unverified）
+#   3. 改了程式就要一起更新文件（README / CHANGELOG / docs / CLAUDE.md 至少一個）
+# 確定這次真的不需要改文件時，可以用 git commit --no-verify 略過。
+
+owner=$(git config framebooster.owneremail)
+email=$(git config user.email)
+if [ -n "$owner" ] && [ "$email" != "$owner" ]; then
+    echo "❌ 作者 email（$email）不是專案擁有者（$owner）。請照 CLAUDE.md 第 1 節設定 git。"
+    exit 1
+fi
+if [ "$(git config --bool commit.gpgsign)" = "true" ]; then
+    echo "❌ 不要簽章：請執行 git config commit.gpgsign false"
+    exit 1
+fi
+
+staged=$(git -c core.quotepath=false diff --cached --name-only)
+code=$(grep -E '^(Sources/|Resources/|scripts/build\.sh|scripts/selftest\.sh|安裝\.command|解除安裝\.command)' <<<"$staged")
+docs=$(grep -E '^(README\.md|CHANGELOG\.md|CLAUDE\.md|docs/)' <<<"$staged")
+if [ -n "$code" ] && [ -z "$docs" ]; then
+    echo "❌ 這次改了程式，卻沒有更新任何文件（README.md、CHANGELOG.md、docs/）。"
+    echo "   請照 CLAUDE.md 第 2 節檢查文件；確定不用改，再用 git commit --no-verify。"
+    echo "   改到的程式："
+    sed 's/^/     /' <<<"$code"
+    exit 1
+fi
+exit 0
