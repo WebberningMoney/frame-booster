@@ -7,7 +7,7 @@
 ![platform](https://img.shields.io/badge/platform-macOS%2015.4%2B-blue) ![chip](https://img.shields.io/badge/chip-Apple%20silicon-black) ![swift](https://img.shields.io/badge/swift-5-orange) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 > ⚠️ **目前是 0.1 版（試用中）**：已在作者的 Mac（M2 Pro、macOS 27）上編譯並通過自我測試，還在累積實際使用經驗。
-> 安裝時會自動用測試影片轉換四次（60、120、144 FPS，以及 120 FPS 快速），結果不對就不會安裝。遇到問題歡迎回報。
+> 安裝時會自動用測試影片轉換四次（60、120、144 FPS，以及 120 FPS 快速），結果不對就不會安裝；另外會試轉一支 VP9 影片，只報告讀不讀得了。遇到問題歡迎回報。
 > 下面的畫面圖都是**示意圖**（右上角有橘色標籤），等實機測試完成後會換成真的截圖。
 
 <p align="center"><img src="docs/images/main.png" width="560" alt="FrameBooster 主畫面（示意圖）"></p>
