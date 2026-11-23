@@ -1,7 +1,7 @@
 # 🎞️ FrameBooster（幀數加速器）
 
 > 把 30 FPS 的影片「補幀」成 60／120／144／240 FPS 的 Mac 小工具，讓影片在高更新率的螢幕（iPhone 17、MacBook Pro、電競螢幕…）上看起來更順。
-> 把影片拖進視窗就開始轉；用的是 Apple 內建在 macOS 裡的 AI，完全離線、不上傳。
+> 把影片拖進視窗、按「開始轉檔」就好；用的是 Apple 內建在 macOS 裡的 AI，完全離線、不上傳。
 > *A macOS app that makes videos silky-smooth (60/120/144/240 FPS) with Apple's built-in AI frame interpolation.*
 
 ![platform](https://img.shields.io/badge/platform-macOS%2015.4%2B-blue) ![chip](https://img.shields.io/badge/chip-Apple%20silicon-black) ![swift](https://img.shields.io/badge/swift-5-orange) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
@@ -109,7 +109,8 @@ git clone https://github.com/WebberningMoney/frame-booster.git
 3. **（可以不改）選「輸出位置」**：預設放在原影片旁邊；按「選擇資料夾…」可以統一放到某個資料夾。選過的資料夾會記住，下次打開還在；按「改回原影片旁邊」就恢復。
 4. **把影片拖進視窗**，或按「選擇影片…」。可以一次拖好幾支，也可以拖整個資料夾。
    - 也可以直接把影片拖到 Dock 上的 FrameBooster 圖示。
-5. 等進度條跑完，進度旁邊會顯示**預估剩餘時間**。轉好的影片檔名多了 `_120fps`（選 60 就是 `_60fps`，以此類推）：
+   - 影片會先列在下面、顯示「**等待中**」，**還不會開始轉**。拖錯了可以按該列右邊的 ✕ 拿掉（不會刪除檔案）。
+5. **按「開始轉檔」**（或按鍵盤 Enter）。等待中的影片會一支一支轉，進度旁邊會顯示**預估剩餘時間**。轉好的影片檔名多了 `_120fps`（選 60 就是 `_60fps`，以此類推）：
 
 ```
 旅行.mov          ← 原本的（不會被改動）
@@ -120,8 +121,9 @@ git clone https://github.com/WebberningMoney/frame-booster.git
 
 <p align="center"><img src="docs/images/converting.png" width="560" alt="轉檔中的畫面（示意圖）"></p>
 
-- 「目標幀率」「輸出位置」和進階設定，都是在**影片加入的那一刻**記下來的。轉檔中改設定，只會影響之後才加入的影片。
-  所以想要同一支影片的 120 和 60 兩種版本，可以先選 120 拖一次、再選 60 拖一次。
+- 「目標幀率」「輸出位置」和進階設定，是在**按下「開始轉檔」那一刻**套用的：這一輪的每支影片都用同一組設定。轉檔中改設定，會用在下一輪。
+- **轉檔中又拖進來的影片**會停在「等待中」，等這一輪轉完，再按一次「開始轉檔」才會開始。
+- 想要同一支影片的 120 和 60 兩種版本：先選 120 轉完一輪，再改成 60、把影片拖進來、再按一次「開始轉檔」。
 - 影片原本就已經是目標幀率以上（例如拿 120 FPS 的遊戲錄影選 60），會顯示「**略過**」，不會轉。
 
 ### 進階設定（點「進階設定」展開）
@@ -158,7 +160,8 @@ git clone https://github.com/WebberningMoney/frame-booster.git
 
 - 一次只轉一支，其他的會排隊，避免好幾支同時搶用硬體。
 - 轉檔中 Mac 不會自動睡眠；可以照常做別的事。
-- 按「**取消全部**」會停止目前這支（做到一半的檔案會被刪掉）和所有排隊中的影片。
+- 按「**取消轉檔**」會停止這一輪：正在轉的那支會停下（做到一半的檔案會被刪掉），排隊中的不轉了。還沒按開始的「等待中」影片不受影響。
+- 按「**清除已完成**」會把已完成、略過、失敗、取消的影片從清單拿掉（不會刪除任何檔案）。
 
 ---
 

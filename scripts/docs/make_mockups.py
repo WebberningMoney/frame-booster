@@ -70,6 +70,10 @@ body { margin: 0; padding: 28px; display: inline-block; background: #d9dde3; fon
 .disc { color: #1d1d1f; } .tri { color: #6e6e73; font-size: 11px; width: 10px; display: inline-block; }
 .adv { display: flex; flex-direction: column; gap: 10px; padding-left: 22px; }
 .lbl { width: 64px; display: inline-block; }
+.btn.primary { background: #0a84ff; color: #fff; font-weight: 600; padding: 5px 22px; box-shadow: none; }
+.btn.primary.off { background: #b9d8fb; color: #f5f9ff; }
+.note { font-size: 11.5px; color: #86868b; margin-top: -6px; }
+.x { color: #a1a1a6; font-size: 13px; padding: 0 4px; }
 """
 
 FILM_ICON = """<svg class="icon" viewBox="0 0 40 34"><g fill="none" stroke="{c}" stroke-width="2.2" stroke-linejoin="round">
@@ -79,7 +83,8 @@ FILM_ICON = """<svg class="icon" viewBox="0 0 40 34"><g fill="none" stroke="{c}"
 CURSOR = """<svg class="cursor" style="left:{x}px;top:{y}px" width="16" height="22" viewBox="0 0 16 22">
 <path d="M1 1v17l4.5-4.2 3 6.7 2.6-1.2-3-6.5H14z" fill="#000" stroke="#fff" stroke-width="1.2"/></svg>"""
 
-def window(inner, overlay="", drop_active=False, advanced=False, outdir=None):
+def window(inner, overlay="", drop_active=False, advanced=False, outdir=None,
+           start="開始轉檔", start_on=False, running=False, note=""):
     c = "#0a84ff" if drop_active else "#8e8e93"
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{CSS}</style></head><body>
 <div class="win" id="win">
@@ -93,8 +98,9 @@ def window(inner, overlay="", drop_active=False, advanced=False, outdir=None):
     <div class="row">輸出位置 <span class="muted">{outdir or "原影片旁邊"}</span> <span class="btn">選擇資料夾…</span>{' <span class="btn">改回原影片旁邊</span>' if outdir else ''}</div>
     <div class="row disc"><span class="tri">{'▾' if advanced else '▸'}</span> 進階設定</div>
     {ADV if advanced else ''}
-    <div class="row"><span class="spacer"></span>
-      <span class="btn {'disabled' if 'job' not in inner else ''}">取消全部</span><span class="btn">清除已完成</span></div>
+    <div class="row"><span class="btn primary {'' if start_on else 'off'}">{start}</span><span class="spacer"></span>
+      <span class="btn {'' if running else 'disabled'}">取消轉檔</span><span class="btn {'' if ('✔' in inner or '⏭' in inner) else 'disabled'}">清除已完成</span></div>
+    {f'<div class="note">{note}</div>' if note else ''}
     {inner}
   </div>
   {overlay}
@@ -108,7 +114,13 @@ ADV = """<div class="adv">
 EMPTY = '<div class="hint">轉好的影片會放在原影片旁邊，檔名加上「_120fps」。</div>'
 
 pages = {}
-pages["main"] = window(EMPTY)
+waiting = """<div class="list">
+ <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">旅行_台南.mov</div>
+   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
+ <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">家人聚餐.mp4</div>
+   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
+</div>"""
+pages["main"] = window(waiting, start="開始轉檔（2 支）", start_on=True)
 
 menu_items = [
     ("60 FPS — 一般螢幕、電視、iPhone 17e、MacBook Air", ""),
@@ -126,17 +138,20 @@ menu = ('<div class="menu" style="left:82px;top:211px">' +
         f'<div class="tip" style="left:236px;top:330px">{tip144}</div>' + CURSOR.format(x=432, y=283))
 pages["fps-menu"] = window('<div class="hint"></div>', overlay=menu)
 
-jobs = """<div class="list">
+jobs = """<div class="list" data-kind="job">
  <div class="job"><div class="st" style="color:#34c759">✔</div><div class="main"><div class="name">旅行_台南.mov</div>
-   <div class="sub">完成（48 秒）→ 旅行_台南_120fps.mov</div></div><span class="btn">在 Finder 中顯示</span></div>
+   <div class="sub">完成（48 秒）→ 旅行_台南_120fps.mov</div></div><span class="btn">在 Finder 中顯示</span><span class="x">✕</span></div>
  <div class="job"><div class="st"><span class="spin"></span></div><div class="main"><div class="name">家人聚餐.mp4</div>
    <div class="bar"><i style="width:45%"></i></div><div class="sub">45%・剩餘約 12 秒　→ 120 FPS・精細・標準畫質</div></div></div>
- <div class="job"><div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">家人聚餐.mp4</div>
-   <div class="sub">等待中　→ 60 FPS・精細・省空間畫質</div></div></div>
- <div class="job"><div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_120fps.mov</div>
-   <div class="sub">略過：這支影片已經是 120 FPS，不需要轉成 60 FPS。</div></div></div>
+ <div class="job"><div class="st" style="color:#8e8e93">🕒</div><div class="main"><div class="name">夜市.mp4</div>
+   <div class="sub">排隊中　→ 120 FPS・精細・標準畫質</div></div></div>
+ <div class="job"><div class="st" style="color:#8e8e93">📥</div><div class="main"><div class="name">生日派對.mov</div>
+   <div class="sub">等待中（按「開始轉檔」後開始）</div></div><span class="x">✕</span></div>
+ <div class="job"><div class="st" style="color:#8e8e93">⏭</div><div class="main"><div class="name">遊戲錄影_144fps.mov</div>
+   <div class="sub">略過：這支影片已經是 144 FPS，不需要轉成 120 FPS。</div></div><span class="x">✕</span></div>
 </div>"""
-pages["converting"] = window(jobs)
+pages["converting"] = window(jobs, start="轉檔中…", running=True,
+    note="轉檔中新加入的 1 支影片，會在這一輪結束後，再按一次「開始轉檔」才開始。")
 adv_tip = ("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。"
            "標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。改了只影響之後加入的影片。")
 pages["advanced"] = window('<div class="hint"></div>', advanced=True, outdir="~/Movies/120fps 影片",

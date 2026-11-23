@@ -10,6 +10,8 @@
 
 cd "$(dirname "$0")/.."
 BIN="build/frame-booster"
+# 安裝時畫面輸出會同時寫進紀錄檔（tee）。設這個變數，讓進度條直接畫在終端機視窗上，紀錄檔不會被塞爆。
+export FRAMEBOOSTER_TTY_PROGRESS=1
 IN="test/sample_30fps.mp4"
 
 [ -x "$BIN" ] || { echo "❌ 找不到 ${BIN}，請先編譯（scripts/build.sh）"; exit 1; }

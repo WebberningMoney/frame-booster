@@ -76,21 +76,28 @@ classDiagram
     class ContentView {
         拖放區、目標幀率下拉選單、輸出位置
         進階設定（補幀方式、輸出畫質）
-        工作清單（進度、預估剩餘時間）
+        開始轉檔／取消轉檔按鈕
+        工作清單（進度、預估剩餘時間、移除）
     }
     class JobQueue {
         jobs: [Job]
         targetFPS / highQuality / outputQuality
         outputDirectory（記在偏好設定）
-        add：加入影片
+        add：加入影片（先放在等待中）
+        startRound：按開始轉檔，套用設定
         startNext：開始下一支
-        cancelAll：全部取消
+        cancelRound：取消這一輪
+        remove：從清單移除
     }
     class Job {
         input: URL
-        targetFPS / highQuality / outputQuality
-        outputDirectory（加入時記下）
-        status / progress / remaining / output
+        settings：JobSettings（按開始時填入）
+        status：等待中→排隊中→轉檔中→完成…
+        progress / remaining / output
+    }
+    class JobSettings {
+        targetFPS / highQuality
+        outputQuality / outputDirectory
     }
     class FPSPreset {
         fps: 60/120/144/240
@@ -134,6 +141,7 @@ classDiagram
     ContentView --> JobQueue
     ContentView ..> FPSPreset : 選項與裝置清單
     JobQueue "1" o-- "*" Job
+    Job ..> JobSettings
     JobQueue --> FrameRateConverter : 一次一支
     CLI_main --> FrameRateConverter
     FrameRateConverter ..> ConvertOptions
@@ -160,8 +168,10 @@ sequenceDiagram
     participant AI as VTFrameProcessor
     participant W as AVAssetWriter
 
-    使用者->>UI: 選目標幀率，拖入影片
-    UI->>UI: 建立 Job（記下幀率、補幀方式、輸出畫質、輸出位置）
+    使用者->>UI: 拖入影片
+    UI->>UI: 建立 Job（等待中）
+    使用者->>UI: 選好設定，按「開始轉檔」
+    UI->>UI: 把當下的設定（幀率、補幀方式、輸出畫質、輸出位置）套用到所有等待中的 Job（排隊中）
     UI->>C: run()（背景執行）
     C->>C: 讀影片資訊（尺寸、幀率、色彩、聲音軌）
     alt 影片已經是目標幀率以上
@@ -353,7 +363,9 @@ flowchart TD
 |---|---|
 | 用 Apple 內建 AI，不用 RIFE 等開源模型 | 不用下載模型、不用 Python 環境，直接用 Apple 晶片的神經網路引擎；Apple 也在 Compressor 用機器學習做 60／90／120 fps 的影格重定時 |
 | 目標幀率只放 60／120／144／240 | 涵蓋一般螢幕、Apple 與 Android 旗艦、電競裝置；165、185 等少見的數字用 144 就很順，選單保持簡單。命令列版仍可指定任意數字 |
-| 幀率與品質在「加入時」記下 | 轉檔中改設定不會影響正在轉、已排隊的影片，也能讓同一支影片轉出不同版本 |
+| 要按「開始轉檔」才開始 | 擁有者回饋：拖進來就馬上轉，來不及改設定或拿掉拖錯的影片 |
+| 設定在「按開始時」套用到整輪 | 拖完再調設定也來得及，最直覺；轉檔中改設定會用在下一輪。同一支影片要兩種版本就分兩輪 |
+| 轉檔中新加入的影片要再按一次開始 | 擁有者的選擇：避免不小心用了不對的設定。新加入的會停在「等待中」，畫面上會提示 |
 | 「補幀方式」和「輸出畫質」分開 | Apple 引擎只有「品質／效能優先」一個開關，管的是補出來的畫面；檔案大小由我們自己的位元率決定。分開才說得清楚，也都收進「進階設定」讓主畫面保持簡單 |
 | 不提供 CPU／GPU／記憶體用量設定 | 解碼、補幀、壓縮大多由 Mac 的專用硬體做，Apple 的 API 沒有「用幾條執行緒、多少 GPU」這類設定；改成顯示預估剩餘時間 |
 | 只記住「輸出位置」 | 其他設定（幀率、補幀方式、畫質）每次打開都回到預設，避免忘記改過而轉出不預期的結果；輸出資料夾則是常常固定的，記住比較方便 |

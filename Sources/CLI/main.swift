@@ -62,9 +62,20 @@ if inputs.isEmpty { print(usage); exit(2) }
 if options.outputURL != nil && inputs.count > 1 { printErr("-o 只能搭配一支影片使用"); exit(2) }
 if options.outputURL != nil && options.outputDirectory != nil { printErr("-o 和 --out-dir 只能擇一"); exit(2) }
 
-/// 輸出到終端機時，進度條會原地更新；輸出到檔案（例如安裝紀錄）時，只記 25%、50%、75% 幾個階段，避免紀錄檔被塞爆。
+/// 進度條要畫在哪裡：
+///   - 直接在終端機執行：畫在畫面上（原地更新）。
+///   - 輸出被導到檔案或 tee（例如安裝時同時寫進 install_log.txt）：
+///       設了環境變數 FRAMEBOOSTER_TTY_PROGRESS=1（安裝腳本會設）→ 進度條直接畫在終端機視窗（/dev/tty），紀錄檔保持乾淨；
+///       沒設 → 只在紀錄裡記 25%、50%、75% 幾個階段，避免紀錄檔被塞爆。
 let progressIsInteractive = isatty(STDERR_FILENO) != 0
+let progressTTY: FileHandle? = progressIsInteractive ? FileHandle.standardError
+    : (ProcessInfo.processInfo.environment["FRAMEBOOSTER_TTY_PROGRESS"] == "1" ? FileHandle(forWritingAtPath: "/dev/tty") : nil)
 final class Milestone { var value = 0 }
+
+/// 進度條畫完後換行：在終端機上，讓下一行訊息從新的一行開始。
+func endProgressLine() {
+    progressTTY?.write("\n".data(using: .utf8)!)
+}
 
 var failures = 0
 
@@ -86,7 +97,7 @@ for (n, url) in inputs.enumerated() {
     let start = Date()
     let lastMilestone = Milestone()
     conv.progressHandler = { p in
-        if !progressIsInteractive {
+        guard let tty = progressTTY else {
             let m = Int(p * 4)          // 0…4 → 每 25% 記一次
             if m > lastMilestone.value && m < 4 {
                 lastMilestone.value = m
@@ -98,15 +109,18 @@ for (n, url) in inputs.enumerated() {
         let eta = p > 0.02 ? elapsed / p - elapsed : 0
         let bar = String(repeating: "█", count: Int(p * 30)) + String(repeating: "░", count: 30 - Int(p * 30))
         let line = String(format: "\r%@%@ %@ %5.1f%%  剩餘約 %.0f 秒   ", label, url.lastPathComponent, bar, p * 100, eta)
-        FileHandle.standardError.write(line.data(using: .utf8)!)
+        tty.write(line.data(using: .utf8)!)
     }
     do {
         let out = try await conv.run()
-        printErr(String(format: "%@✅ 完成（%.1f 秒）：%@", progressIsInteractive ? "\n" : "", Date().timeIntervalSince(start), out.path))
+        endProgressLine()
+        printErr(String(format: "✅ 完成（%.1f 秒）：%@", Date().timeIntervalSince(start), out.path))
     } catch let e as ConvertError where e.isSkip {
-        printErr("\n⏭ 略過 \(url.lastPathComponent)：\(e.message)")
+        endProgressLine()
+        printErr("⏭ 略過 \(url.lastPathComponent)：\(e.message)")
     } catch {
-        printErr("\n❌ \(url.lastPathComponent)：\(error.localizedDescription)")
+        endProgressLine()
+        printErr("❌ \(url.lastPathComponent)：\(error.localizedDescription)")
         failures += 1
     }
 }
