@@ -169,6 +169,8 @@ final class FrameRateConverter: @unchecked Sendable {
     /// 「動作太大時不補幀」打開時，轉完後記錄：量了幾組相鄰畫面、其中幾組因為動作太大沒有補幀。
     private(set) var analyzedPairs = 0
     private(set) var skippedPairs = 0
+    /// 標記版：紅色小方塊畫不上去時的原因（nil＝沒問題）。命令列會顯示出來。
+    private(set) var markerProblem: String?
 
     init(input: URL, options: ConvertOptions = ConvertOptions()) {
         self.inputURL = input
@@ -510,6 +512,7 @@ final class FrameRateConverter: @unchecked Sendable {
         }
         analyzedPairs = gen.analyzedPairs
         skippedPairs = gen.skippedPairs
+        markerProblem = gen.markerProblem
         progressHandler?(1)
         return outURL
     }
@@ -657,6 +660,8 @@ final class FrameGenerator: @unchecked Sendable {
     /// 量過動作分數的相鄰畫面組數、其中因為動作太大沒補幀的組數
     private(set) var analyzedPairs = 0
     private(set) var skippedPairs = 0
+    /// 標記版：紅色小方塊畫不上去時的原因（nil＝沒問題）
+    private(set) var markerProblem: String?
     private(set) var origin = CMTime.zero
     private(set) var lastOutputTime: CMTime?
     private var prev: (buf: CVPixelBuffer, pts: CMTime)?
@@ -789,15 +794,22 @@ final class FrameGenerator: @unchecked Sendable {
     }
 
     /// 標記版影片用：複製一張畫面，在四個角落畫紅色小方塊（原本那張不動，因為它還會當成原始畫面輸出）。
+    /// 複本用一般的 4:2:0 格式另外建立，不用 AI 引擎的記憶體池：
+    /// 引擎要求的記憶體格式不一定能讓程式直接畫上去（第一版就因為這樣，紅色小方塊沒有出現）。
     private func markedCopy(of image: CVPixelBuffer) throws -> CVPixelBuffer {
+        let tenBit = [kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]
+            .contains(CVPixelBufferGetPixelFormatType(image))
+        let format = tenBit ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let attrs: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()]
         var out: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(nil, dstPool, &out) == kCVReturnSuccess, let dst = out else {
+        guard CVPixelBufferCreate(nil, CVPixelBufferGetWidth(image), CVPixelBufferGetHeight(image), format,
+                                  attrs as CFDictionary, &out) == kCVReturnSuccess, let dst = out else {
             throw ConvertError("無法配置標記用的影格。")
         }
         let status = VTPixelTransferSessionTransferImage(transferSession, from: image, to: dst)
         guard status == noErr else { throw ConvertError("複製標記用的影格失敗（\(status)）。") }
         CVBufferPropagateAttachments(image, dst)
-        SkipMarker.draw(on: dst)
+        if let problem = SkipMarker.draw(on: dst), markerProblem == nil { markerProblem = problem }
         return dst
     }
 

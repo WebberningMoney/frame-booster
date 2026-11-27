@@ -196,6 +196,9 @@ for (n, url) in inputs.enumerated() {
         if options.motionThreshold != nil {
             printErr("   動作太大、沒補幀：\(conv.skippedPairs) 處（共量了 \(conv.analyzedPairs) 處）")
         }
+        if let problem = conv.markerProblem {
+            printErr("   ⚠️ 標記版的紅色小方塊沒有畫上：\(problem)")
+        }
     } catch let e as ConvertError where e.isSkip {
         endProgressLine()
         printErr("⏭ 略過 \(url.lastPathComponent)：\(e.message)")

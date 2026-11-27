@@ -358,9 +358,14 @@ struct MotionReport {
 /// 四個角落都畫，是因為直拍影片播放時會旋轉，左上角不一定還在左上角。
 /// 只用在「標記版影片」（調整門檻時用），一般轉檔不會畫。
 enum SkipMarker {
-    static func draw(on buffer: CVPixelBuffer) {
-        guard CVPixelBufferGetPlaneCount(buffer) == 2 else { return }
+    /// 畫上紅色小方塊。成功回傳 nil；畫不上去時回傳原因（例如記憶體格式不支援），讓命令列顯示出來方便查問題。
+    static func draw(on buffer: CVPixelBuffer) -> String? {
         let format = CVPixelBufferGetPixelFormatType(buffer)
+        let supported: [OSType] = [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                   kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]
+        guard supported.contains(format), CVPixelBufferGetPlaneCount(buffer) == 2 else {
+            return "畫面格式 \(fourCC(format)) 不支援畫標記"
+        }
         let tenBit = format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
             || format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         let fullRange = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -368,8 +373,11 @@ enum SkipMarker {
         // 紅色的 Y（亮度）、Cb、Cr 值（BT.709，8-bit）
         let (yv, cbv, crv) = fullRange ? (54, 99, 255) : (63, 102, 240)
 
-        CVPixelBufferLockBaseAddress(buffer, [])
+        guard CVPixelBufferLockBaseAddress(buffer, []) == kCVReturnSuccess else { return "無法鎖定畫面記憶體" }
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard CVPixelBufferGetBaseAddressOfPlane(buffer, 0) != nil, CVPixelBufferGetBaseAddressOfPlane(buffer, 1) != nil else {
+            return "讀不到畫面記憶體（格式 \(fourCC(format))）"
+        }
         let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer)
         let size = max(min(w, h) / 12, 8) / 2 * 2
         let corners = [(0, 0), (w - size, 0), (0, h - size), (w - size, h - size)]
@@ -403,5 +411,12 @@ enum SkipMarker {
                 }
             }
         }
+        return nil
+    }
+
+    /// 像素格式的四個字代號，例如 '420v'（除錯訊息用）
+    static func fourCC(_ code: OSType) -> String {
+        let chars = [24, 16, 8, 0].map { Character(UnicodeScalar(UInt8((code >> $0) & 0xff))) }
+        return "'" + String(chars) + "'"
     }
 }

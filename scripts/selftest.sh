@@ -113,10 +113,16 @@ fi
 KOUT="build/selftest_60fps_mark.mov"
 rm -f "$KOUT"
 # 門檻設得極低（0.01）＝幾乎每個地方都跳過，用來確認「紅色小方塊」標記功能能正常產生影片
-if "$BIN" "$IN" --fps 60 --motion-threshold 0.01 --mark-skipped -o "$KOUT" >/dev/null 2>&1; then
-    echo "✔ 標記版影片可以產生（${KOUT}，紅色小方塊在四個角落）"
+if klog=$("$BIN" "$IN" --fps 60 --motion-threshold 0.01 --mark-skipped -o "$KOUT" 2>&1); then
+    if grep -q "紅色小方塊沒有畫上" <<<"$klog"; then
+        echo "⚠️ 標記版影片產生了，但紅色小方塊沒有畫上（不影響安裝）："
+        grep "紅色小方塊沒有畫上" <<<"$klog" | sed 's/^ */  /'
+    else
+        echo "✔ 標記版影片可以產生（${KOUT}，被跳過的畫面四個角落有紅色小方塊）"
+    fi
 else
-    echo "⚠️ 標記版影片無法產生（不影響安裝）"
+    echo "⚠️ 標記版影片無法產生（不影響安裝）："
+    tail -3 <<<"$klog"
 fi
 rm -f build/sample_30fps_動作分析*.csv
 if alog=$("$BIN" --analyze "$IN" --out-dir build 2>&1); then
