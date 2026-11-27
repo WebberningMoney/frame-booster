@@ -4,13 +4,15 @@
 //   - 把影片拖進來（或按「選擇影片…」）後，影片先停在「等待中」，而且**預設是勾選的**，不會馬上開始。
 //   - 每一列前面有勾選框：可以只勾其中幾支（按住 Shift 再勾，可以一次勾一整段），也有「全選／全不選」。
 //   - 選好「目標幀率」（60／120／144／240，預設 120）、「輸出位置」（預設原影片旁邊），
-//     以及「進階設定」裡的「補幀方式」（精細／快速）和「輸出畫質」（高／標準／省空間），
+//     以及「進階設定」裡的「補幀方式」（精細／快速）、「輸出畫質」（高／標準／省空間）
+//     和「動作太大時不補幀」（預設關閉；打開後選少跳過／適中／多跳過，見 Motion.swift），
 //     再按「開始轉檔」：**勾選的**影片都用「按下那一刻」的設定轉；沒勾的留著不動。
 //   - 已經轉完（或略過、失敗、取消）的影片也可以再勾選，用新的設定再轉一次（舊的輸出檔保留，新的另存一個檔）。
 //     轉過的影片會自動取消勾選，避免下一輪不小心又轉一次。
 //   - 每一列會依「目前的」目標幀率和輸出畫質，顯示原檔大小和預估轉完的大小，改設定就會跟著更新。
 //   - 轉檔中「開始轉檔」不能按；這時新拖進來的影片會停在「等待中」，這一輪結束後再勾選、再按一次。
 //   - 「輸出位置」選過的資料夾會記住（存在 App 的偏好設定裡），下次打開還在。
+//     進階設定則不記住：每次打開 App 都回到預設（「動作太大時不補幀」是關閉的），避免忘記它開著。
 //   - 一次只轉一支，其他的排隊等（同時轉好幾支反而會更慢）。
 //   - 轉好的檔案放在原影片旁邊（或選定的資料夾），檔名加上「_120fps」之類的字。原影片不會被修改。
 //   - 轉檔中會顯示百分比和預估剩餘時間。
@@ -54,10 +56,12 @@ struct JobSettings {
     let highQuality: Bool             // 補幀方式（true＝精細）
     let outputQuality: OutputQuality
     let outputDirectory: URL?         // nil＝原影片旁邊
+    let motionSkip: MotionSkipLevel?  // 動作太大時不補幀：nil＝關閉
 
     /// 例如「→ 120 FPS・精細・標準畫質」（有選輸出資料夾時加上「・存到「影片輸出」」）
     var text: String {
         var t = "→ \(targetFPS) FPS・\(highQuality ? "精細" : "快速")・\(outputQuality.displayName)畫質"
+        if let m = motionSkip { t += "・大動作不補幀（\(m.displayName)）" }
         if let dir = outputDirectory { t += "・存到「\(dir.lastPathComponent)」" }
         return t
     }
@@ -81,6 +85,7 @@ final class Job: ObservableObject, Identifiable, @unchecked Sendable {
     @Published var seconds: Double = 0
     @Published var isChecked = true         // 勾選框；新加入的預設勾選
     @Published var basics: VideoBasics?     // 預估檔案大小用的影片資料（加入後在背景讀取）
+    @Published var skippedPairs: Int?       // 「動作太大時不補幀」打開時：幾處因為動作太大沒有補幀
     init(input: URL) { self.input = input }
 
     /// 可以勾選（＝可以被這一輪轉換）的狀態：還沒開始的，或已經結束的（可以再轉一次）
@@ -108,6 +113,9 @@ final class JobQueue: ObservableObject {
     @Published var targetFPS: Int32 = FPSPreset.defaultFPS
     @Published var outputQuality: OutputQuality = .standard
     @Published var showAdvanced = false
+    /// 進階設定「動作太大時不補幀」：預設關閉，而且不記住（每次打開 App 都是關閉）
+    @Published var skipBigMotion = false
+    @Published var motionLevel: MotionSkipLevel = .normal
     /// 輸出資料夾（nil＝原影片旁邊）。改了就存進 App 的偏好設定，下次打開還在。
     @Published var outputDirectory: URL? {
         didSet { UserDefaults.standard.set(outputDirectory?.path, forKey: Self.outputDirectoryKey) }
@@ -191,13 +199,15 @@ final class JobQueue: ObservableObject {
         guard !isRunning else { return }
         objectWillChange.send()
         let settings = JobSettings(targetFPS: targetFPS, highQuality: highQuality,
-                                   outputQuality: outputQuality, outputDirectory: outputDirectory)
+                                   outputQuality: outputQuality, outputDirectory: outputDirectory,
+                                   motionSkip: skipBigMotion ? motionLevel : nil)
         for job in jobs where job.isChecked && job.isSelectable {
             job.settings = settings
             job.progress = 0
             job.remaining = nil
             job.output = nil
             job.seconds = 0
+            job.skippedPairs = nil
             job.isChecked = false
             job.status = .queued
         }
@@ -213,6 +223,7 @@ final class JobQueue: ObservableObject {
         opts.highQuality = settings.highQuality
         opts.outputQuality = settings.outputQuality
         opts.outputDirectory = settings.outputDirectory
+        opts.motionThreshold = settings.motionSkip?.threshold
         let conv = FrameRateConverter(input: job.input, options: opts)
         current = conv
         let start = Date()
@@ -229,6 +240,7 @@ final class JobQueue: ObservableObject {
                     job.output = out
                     job.progress = 1
                     job.seconds = Date().timeIntervalSince(start)
+                    job.skippedPairs = settings.motionSkip == nil ? nil : conv.skippedPairs
                     job.status = .done
                 }
             } catch {
@@ -331,6 +343,20 @@ struct ContentView: View {
                         .pickerStyle(.segmented)
                         .frame(width: 240)
                         .help("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。按「開始轉檔」時套用；轉檔中改設定，會用在下一輪。")
+                        Spacer()
+                    }
+                    HStack(spacing: 8) {
+                        Toggle("動作太大時不補幀", isOn: $queue.skipBigMotion)
+                            .toggleStyle(.checkbox)
+                            .help("AI 補幀遇到動得很猛的地方（離鏡頭很近又快的手、甩動的頭髮）容易猜錯，在輪廓周圍產生像水波一樣的扭曲。打開後，動作太大的那一瞬間不補幀、直接重複原始畫面（那一瞬間會回到原本 30 FPS 的感覺），其他地方照常補幀。轉檔會比較慢。預設關閉，關掉 App 後也會回到關閉。詳細說明和調整方法見 docs/MOTION_TUNING.md。")
+                        Picker("跳過程度", selection: $queue.motionLevel) {
+                            ForEach(MotionSkipLevel.allCases) { l in Text(l.displayName).tag(l) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 240)
+                        .disabled(!queue.skipBigMotion)
+                        .help("少跳過：只跳過動作最猛的地方，最順，但可能留一些波紋。適中（預設）。多跳過：波紋最少，但比較多瞬間回到 30 FPS 的感覺。按「開始轉檔」時套用。")
                         Spacer()
                     }
                 }
@@ -480,6 +506,10 @@ struct JobRow: View {
                 case .done:
                     Text(String(format: "完成（%.0f 秒）→ %@", job.seconds, job.output?.lastPathComponent ?? ""))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    if let n = job.skippedPairs {
+                        Text(n == 0 ? "沒有動作太大的地方，全部都有補幀" : "有 \(n) 處動作太大，未補幀（那幾瞬間維持原本的順暢度）")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 case .skipped(let msg):
                     Text("略過：\(msg)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 case .failed(let msg):

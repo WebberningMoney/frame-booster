@@ -9,6 +9,8 @@
 #   4. 有「用原本的幀率正常播放」標記（iPhone「照片」才不會當成慢動作）
 # 另外試轉一支 VP9 格式的影片（test/sample_vp9.mp4，網站下載的影片常見這種格式），
 # 只顯示「讀得了／讀不了」，不影響安裝（有些 Mac 可能本來就不支援）。
+# 再試一次進階設定「動作太大時不補幀」（120 FPS、適中）、標記版影片、動作分析報告，
+# 一樣只報告結果、不影響安裝（這是選用功能，預設關閉）；轉檔時間會列進速度參考，方便比較會慢多少。
 # 最後印出每一種花了幾秒（第一次轉檔包含 AI 引擎載入的時間，所以先轉 60 當暖身）。
 
 cd "$(dirname "$0")/.."
@@ -90,6 +92,39 @@ if "$BIN" "test/sample_vp9.mp4" --fps 60 -o "$VP9OUT" >/dev/null 2>&1 && vp9info
     echo "✔ VP9：可以讀取並轉檔（結果：$(field frames "$vp9info") 張畫面）"
 else
     echo "⚠️ VP9：這台 Mac 讀不了 VP9 影片（不影響安裝；這種影片需要先用 HandBrake 轉成 H.264／H.265）"
+fi
+
+# 「動作太大時不補幀」：只報告結果，不影響安裝
+echo ""
+echo "── 測試：動作太大時不補幀（進階設定，預設關閉）──"
+MOUT="build/selftest_120fps_motion.mov"
+rm -f "$MOUT"
+mstart=$(now)
+if mlog=$("$BIN" "$IN" --fps 120 --skip-motion normal -o "$MOUT" 2>&1) && minfo=$("$BIN" --info "$MOUT"); then
+    mtook=$(awk -v a="$mstart" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }')
+    mexpected=$(awk -v n="$fin" -v f="$fpsin" 'BEGIN { printf "%d", n * 120 / f + 0.5 }')
+    echo "✔ 可以使用：轉檔花了 ${mtook} 秒，結果 $(field frames "$minfo") 張畫面（預期約 ${mexpected}）"
+    grep "動作太大" <<<"$mlog" | sed 's/^ *//'
+    SUMMARY="${SUMMARY}  120 FPS・精細＋動作太大時不補幀（適中）：${mtook} 秒"$'\n'
+else
+    echo "⚠️ 這台 Mac 無法使用「動作太大時不補幀」（不影響安裝）："
+    tail -3 <<<"$mlog"
+fi
+KOUT="build/selftest_60fps_mark.mov"
+rm -f "$KOUT"
+# 門檻設得極低（0.01）＝幾乎每個地方都跳過，用來確認「紅色小方塊」標記功能能正常產生影片
+if "$BIN" "$IN" --fps 60 --motion-threshold 0.01 --mark-skipped -o "$KOUT" >/dev/null 2>&1; then
+    echo "✔ 標記版影片可以產生（${KOUT}，紅色小方塊在四個角落）"
+else
+    echo "⚠️ 標記版影片無法產生（不影響安裝）"
+fi
+rm -f build/sample_30fps_動作分析*.csv
+if alog=$("$BIN" --analyze "$IN" --out-dir build 2>&1); then
+    echo "✔ 動作分析報告可以產生（build/sample_30fps_動作分析.csv）"
+    grep -E "：門檻|分數分布" <<<"$alog" | sed 's/^ */  /'
+else
+    echo "⚠️ 動作分析報告無法產生（不影響安裝）："
+    tail -3 <<<"$alog"
 fi
 
 echo ""

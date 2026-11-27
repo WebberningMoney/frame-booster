@@ -15,6 +15,9 @@
 //   也能讀 VP9 格式的影片（網站下載的 .mp4 常見）：程式會先打開 macOS 內建、預設沒啟用的 VP9 解碼器。
 //   輸出檔會標上「用原本的幀率正常播放」，避免 iPhone「照片」把 120 FPS 影片當成慢動作。
 //
+// 進階設定「動作太大時不補幀」打開時，每兩張原始畫面會先量「動作分數」（Motion.swift），
+// 分數超過門檻就不補幀、直接重複前一張原始畫面，避免 AI 在動得很猛的地方猜錯、產生波紋。
+//
 // 另外提供 VideoBasics：快速讀出影片長度、資料量等，讓畫面在轉檔前先「預估轉好後的大小」；
 // 預估和實際壓縮用的是同一個位元率公式（videoBitrate）。
 
@@ -56,6 +59,11 @@ struct ConvertOptions {
     var maxInterpolationGap: Double = 0.5
     /// 直接指定輸出檔（命令列的 -o）。nil 代表自動命名：「原檔名_120fps.mov」，放在 outputDirectory 或原影片旁邊。
     var outputURL: URL? = nil
+    /// 「動作太大時不補幀」的門檻（動作分數，見 Motion.swift）。nil＝關閉（每個地方都補幀，預設）。
+    var motionThreshold: Double? = nil
+    /// 標記版影片：因為動作太大而沒補幀的畫面，在四個角落加紅色小方塊（調整門檻時用）。
+    /// 自動命名時檔名會多「_標記」，例如「原檔名_60fps_標記.mov」。只有 motionThreshold 有設定時才有作用。
+    var markSkipped = false
 }
 
 struct ConvertError: LocalizedError {
@@ -90,7 +98,6 @@ struct VideoInfo: CustomStringConvertible {
 //   AVFoundation 的讀寫物件沒有標成 Sendable，但這個程式保證每個物件只在固定的一條工作線上使用
 //  （或有上鎖），所以用 @unchecked Sendable 告訴編譯器「這裡由我們自己負責」，避免一大堆警告。
 
-/// 可以被工作線共用的小盒子（只在同一條工作線上讀寫）。
 /// 預估檔案大小用的影片基本資料。
 struct VideoBasics {
     let duration: Double        // 秒
@@ -113,6 +120,7 @@ struct VideoBasics {
     }
 }
 
+/// 可以被工作線共用的小盒子（只在同一條工作線上讀寫）。
 private final class Box<T>: @unchecked Sendable { var value: T; init(_ v: T) { value = v } }
 
 /// 影像這條工作線要用到的物件，包在一起交給它。
@@ -158,6 +166,10 @@ final class FrameRateConverter: @unchecked Sendable {
     var isCancelled: Bool { cancelLock.lock(); defer { cancelLock.unlock() }; return _cancelled }
     func cancel() { cancelLock.lock(); _cancelled = true; cancelLock.unlock() }
 
+    /// 「動作太大時不補幀」打開時，轉完後記錄：量了幾組相鄰畫面、其中幾組因為動作太大沒有補幀。
+    private(set) var analyzedPairs = 0
+    private(set) var skippedPairs = 0
+
     init(input: URL, options: ConvertOptions = ConvertOptions()) {
         self.inputURL = input
         self.options = options
@@ -165,9 +177,10 @@ final class FrameRateConverter: @unchecked Sendable {
 
     // MARK: - 輸出檔名（不會覆蓋已存在的檔案，會自動加上 2、3…）
 
-    static func defaultOutputURL(for input: URL, fps: Int32, in directory: URL? = nil) -> URL {
+    /// suffix：檔名最後再加的字（標記版影片用「_標記」）。
+    static func defaultOutputURL(for input: URL, fps: Int32, in directory: URL? = nil, suffix: String = "") -> URL {
         let dir = directory ?? input.deletingLastPathComponent()
-        let base = input.deletingPathExtension().lastPathComponent + "_\(fps)fps"
+        let base = input.deletingPathExtension().lastPathComponent + "_\(fps)fps" + suffix
         var url = dir.appendingPathComponent(base).appendingPathExtension("mov")
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) {
@@ -271,6 +284,12 @@ final class FrameRateConverter: @unchecked Sendable {
               let transferSession = transferSessionOpt else { throw ConvertError("無法建立像素轉換工作階段。") }
         defer { VTPixelTransferSessionInvalidate(transferSession) }
 
+        // ---- 「動作太大時不補幀」：打開時才準備動作分析（關閉時完全不會多做事） ----
+        var motion: MotionAnalyzer?
+        if options.motionThreshold != nil {
+            motion = try MotionAnalyzer(sourceWidth: width, sourceHeight: height)
+        }
+
         // ---- 讀取器：把原始影片解碼成一張張畫面 ----
         let reader = try AVAssetReader(asset: asset)
         let videoOut = AVAssetReaderTrackOutput(track: vTrack, outputSettings: [
@@ -292,7 +311,9 @@ final class FrameRateConverter: @unchecked Sendable {
                 throw ConvertError("輸出資料夾不存在或無法寫入：\(dir.path)")
             }
         }
-        let outURL = options.outputURL ?? Self.defaultOutputURL(for: inputURL, fps: fps, in: options.outputDirectory)
+        let marking = options.markSkipped && options.motionThreshold != nil
+        let outURL = options.outputURL ?? Self.defaultOutputURL(for: inputURL, fps: fps, in: options.outputDirectory,
+                                                                 suffix: marking ? "_標記" : "")
         // 安全檢查：絕不覆蓋原影片（例如命令列 -o 不小心指定成原檔）
         if outURL.standardizedFileURL.resolvingSymlinksInPath() == inputURL.standardizedFileURL.resolvingSymlinksInPath() {
             throw ConvertError("輸出檔不能和原影片是同一個檔案。")
@@ -382,7 +403,8 @@ final class FrameRateConverter: @unchecked Sendable {
             targetFPS: fps, maxGap: options.maxInterpolationGap,
             fallbackFrameDuration: nominalFPS > 0 ? 1.0 / Double(nominalFPS) : 1.0 / 30.0,
             processor: processor, srcPool: srcPool, dstPool: dstPool,
-            transferSession: transferSession, readerOutput: videoOut)
+            transferSession: transferSession, readerOutput: videoOut,
+            motion: motion, motionThreshold: options.motionThreshold ?? .infinity, markSkipped: marking)
 
         // 先讀第一張畫面，用它的時間當作輸出檔的起點，之後聲音才能開始寫入。
         guard try gen.prime() else {
@@ -486,6 +508,8 @@ final class FrameRateConverter: @unchecked Sendable {
             try? FileManager.default.removeItem(at: outURL)
             throw ConvertError("寫入輸出檔失敗：\(writer.error?.localizedDescription ?? "未知錯誤")")
         }
+        analyzedPairs = gen.analyzedPairs
+        skippedPairs = gen.skippedPairs
         progressHandler?(1)
         return outURL
     }
@@ -507,7 +531,6 @@ final class FrameRateConverter: @unchecked Sendable {
         return pool
     }
 
-    /// 讀取影片資訊。畫面數是實際一張張數出來的（不解碼，所以很快），比檔案標示的幀率可靠。
     /// 輸出影片的位元率（每秒多少 bit）。實際轉檔和「預估檔案大小」都用這一個算法，兩邊才會一致。
     static func videoBitrate(sourceDataRate: Double, width: Int, height: Int,
                              nominalFPS: Float, targetFPS: Int32, quality: OutputQuality) -> Double {
@@ -562,6 +585,7 @@ final class FrameRateConverter: @unchecked Sendable {
         return item
     }
 
+    /// 讀取影片資訊。畫面數是實際一張張數出來的（不解碼，所以很快），比檔案標示的幀率可靠。
     static func info(for url: URL) async throws -> VideoInfo {
         enableExtraDecoders()
         let asset = AVURLAsset(url: url)
@@ -615,6 +639,7 @@ final class FrameRateConverter: @unchecked Sendable {
 ///   - 格子剛好在 a 上 → 直接用 a 的原圖。
 ///   - 格子在 a、b 中間 → 算出位置比例（例如 0.25、0.5、0.75），請 AI 補出那一刻的畫面。
 ///   - a、b 相隔太久（超過 maxGap）→ 不補，延續 a。
+///   - 「動作太大時不補幀」打開、而且 a→b 的動作分數超過門檻 → 不補，延續 a（標記版會在這些畫面畫紅色小方塊）。
 /// 用時間來算比例，所以 29.97 FPS、幀率忽快忽慢的手機影片也能對齊。
 final class FrameGenerator: @unchecked Sendable {
     private let fps: Int32
@@ -625,7 +650,13 @@ final class FrameGenerator: @unchecked Sendable {
     private let dstPool: CVPixelBufferPool
     private let transferSession: VTPixelTransferSession
     private let readerOutput: AVAssetReaderTrackOutput
+    private let motion: MotionAnalyzer?
+    private let motionThreshold: Double
+    private let markSkipped: Bool
 
+    /// 量過動作分數的相鄰畫面組數、其中因為動作太大沒補幀的組數
+    private(set) var analyzedPairs = 0
+    private(set) var skippedPairs = 0
     private(set) var origin = CMTime.zero
     private(set) var lastOutputTime: CMTime?
     private var prev: (buf: CVPixelBuffer, pts: CMTime)?
@@ -637,7 +668,9 @@ final class FrameGenerator: @unchecked Sendable {
 
     init(targetFPS: Int32, maxGap: Double, fallbackFrameDuration: Double,
          processor: VTFrameProcessor, srcPool: CVPixelBufferPool, dstPool: CVPixelBufferPool,
-         transferSession: VTPixelTransferSession, readerOutput: AVAssetReaderTrackOutput) {
+         transferSession: VTPixelTransferSession, readerOutput: AVAssetReaderTrackOutput,
+         motion: MotionAnalyzer? = nil, motionThreshold: Double = .infinity, markSkipped: Bool = false) {
+        self.motion = motion; self.motionThreshold = motionThreshold; self.markSkipped = markSkipped
         self.fps = targetFPS; self.maxGap = maxGap; self.fallbackDuration = fallbackFrameDuration
         self.lastGap = fallbackFrameDuration
         self.processor = processor; self.srcPool = srcPool; self.dstPool = dstPool
@@ -722,7 +755,17 @@ final class FrameGenerator: @unchecked Sendable {
                         interp.append((slot, min(phase, 0.998)))
                     }
                 }
-                if !interp.isEmpty {
+                var tooMuchMotion = false
+                if !interp.isEmpty, let analyzer = motion {
+                    let score = try analyzer.score(from: a, to: (buf, pts))
+                    analyzedPairs += 1
+                    if score > motionThreshold { tooMuchMotion = true; skippedPairs += 1 }
+                }
+                if !interp.isEmpty && tooMuchMotion {
+                    // 動作太大：不讓 AI 猜，重複 a（標記版：用一張畫了紅色小方塊的複本）
+                    let held = try markSkipped ? markedCopy(of: a.buf) : a.buf
+                    for (slot, _) in interp { pending.append((held, slotTime(slot))) }
+                } else if !interp.isEmpty {
                     let outs = try interpolate(from: a, to: (buf, pts), phases: interp.map { $0.1 },
                                                times: interp.map { slotTime($0.0) })
                     for (i, (slot, _)) in interp.enumerated() { pending.append((outs[i], slotTime(slot))) }
@@ -742,6 +785,19 @@ final class FrameGenerator: @unchecked Sendable {
         let status = VTPixelTransferSessionTransferImage(transferSession, from: image, to: dst)
         guard status == noErr else { throw ConvertError("複製來源影格失敗（\(status)）。") }
         CVBufferPropagateAttachments(image, dst)
+        return dst
+    }
+
+    /// 標記版影片用：複製一張畫面，在四個角落畫紅色小方塊（原本那張不動，因為它還會當成原始畫面輸出）。
+    private func markedCopy(of image: CVPixelBuffer) throws -> CVPixelBuffer {
+        var out: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, dstPool, &out) == kCVReturnSuccess, let dst = out else {
+            throw ConvertError("無法配置標記用的影格。")
+        }
+        let status = VTPixelTransferSessionTransferImage(transferSession, from: image, to: dst)
+        guard status == noErr else { throw ConvertError("複製標記用的影格失敗（\(status)）。") }
+        CVBufferPropagateAttachments(image, dst)
+        SkipMarker.draw(on: dst)
         return dst
     }
 

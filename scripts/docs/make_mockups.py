@@ -116,6 +116,7 @@ def window(inner, overlay="", drop_active=False, advanced=False, outdir=None,
 ADV = """<div class="adv">
   <div class="row"><span class="lbl">補幀方式</span><span class="seg"><span class="on">精細</span><span>快速</span></span></div>
   <div class="row"><span class="lbl">輸出畫質</span><span class="seg"><span>高</span><span class="on">標準</span><span>省空間</span></span></div>
+  <div class="row"><span class="cb on">✓</span>&nbsp;動作太大時不補幀&nbsp;&nbsp;<span class="seg"><span>少跳過</span><span class="on">適中</span><span>多跳過</span></span></div>
 </div>"""
 
 EMPTY = '<div class="hint">轉好的影片會放在原影片旁邊，檔名加上「_120fps」。</div>'
@@ -175,10 +176,10 @@ jobs = SELBAR + f"""<div class="list" data-kind="job">
 </div>"""
 pages["converting"] = window(jobs, start="轉檔中…", running=True,
     note="轉檔中新加入的 1 支影片，會在這一輪結束後，勾選後再按一次「開始轉檔」才開始。")
-adv_tip = ("存檔時用多少資料量記錄畫面（＝檔案大小）。高：檔案約為標準的 1.5 倍，細節最多。"
-           "標準（預設）。省空間：約為標準的 0.6 倍，畫面可能比較糊。改了只影響之後加入的影片。")
+adv_tip = ("AI 補幀遇到動得很猛的地方容易猜錯，在輪廓周圍產生波紋。打開後，動作太大的那一瞬間不補幀、"
+           "直接重複原始畫面，其他地方照常補幀。轉檔會比較慢。預設關閉。")
 pages["advanced"] = window('<div class="hint"></div>', advanced=True, outdir="~/Movies/120fps 影片",
-    overlay=f'<div class="tip" style="left:300px;top:300px;width:300px">{adv_tip}</div>' + CURSOR.format(x=270, y=380))
+    overlay=f'<div class="tip" style="left:300px;top:300px;width:300px">{adv_tip}</div>' + CURSOR.format(x=100, y=406))
 
 # Concept figure: how frames are added (30 → 120)
 FRAMES = """<!doctype html><html><head><meta charset="utf-8"><style>

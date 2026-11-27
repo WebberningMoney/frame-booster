@@ -69,5 +69,7 @@ commit 時如果改了程式卻沒有動到任何文件，`pre-commit` 會擋下
   否則 macOS 會把圖示放進灰色的框裡（0.1 版發生過）。改圖示請改 `scripts/docs/make_icon.py` 再重新產生 `assets/AppIcon.iconset/`。
 - **預估大小和實際壓縮要共用 `FrameRateConverter.videoBitrate`**：改位元率規則時只改這一個地方，README「預估轉好後的大小」的說明也要跟著檢查。
 - **輸出檔要保留「用原本的幀率正常播放」標記**（`fullFrameRatePlaybackItem()`）：拿掉的話，iPhone「照片」會把 120 FPS 影片當成慢動作。自我測試會檢查。
+- **「動作太大時不補幀」的門檻有兩處要同步**：`Sources/Motion.swift` 的 `MotionSkipLevel.threshold`，和 `docs/MOTION_TUNING.md` 第 3 節的對照表、第 7 節的修改紀錄（寫上日期和依據）。
+- **調整門檻時，擁有者提供的分析數字、時間點、截圖、影片內容都不要寫進專案、GitHub、commit 訊息或任何紀錄**；專案裡只記「門檻改成多少、依據是幾支影片的實測」這類不含內容的結論。擁有者明確說過截圖「請勿放入專案任一地方」。
 - 這個工具**完全不連網**。若要新增任何對外連線，先問擁有者，並寫進 README 的「隱私」一節。
 - 不可復原的動作（例如解除安裝）在腳本裡都要有確認步驟。

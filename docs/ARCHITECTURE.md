@@ -34,6 +34,7 @@ flowchart LR
         R["AVAssetReader<br/>解碼成一張張畫面"] --> G["FrameGenerator<br/>排時間格線"]
         G -- "落在格子上" --> W
         G -- "在兩格之間" --> AI["VTFrameProcessor<br/>Apple AI 補幀"]
+        G -. "選用：先量動作分數<br/>太大就不補" .-> M["MotionAnalyzer<br/>Apple 動作追蹤（光流）"]
         AI --> W["AVAssetWriter<br/>HEVC 壓縮"]
         R -. "聲音原封不動" .-> W
     end
@@ -53,7 +54,7 @@ flowchart LR
 | **SwiftUI** | Apple 用「描述畫面長怎樣」來寫介面的框架 | 視窗、下拉選單、進度條、拖放 | `App.swift` |
 | **AppKit** | macOS 傳統的介面框架 | 開檔視窗（`NSOpenPanel`）、在 Finder 中顯示（`NSWorkspace`）、Dock 拖放（`NSApplicationDelegate`） | `App.swift` |
 | **AVFoundation** | Apple 的影音框架 | 讀影片（`AVAssetReader`）、寫影片（`AVAssetWriter`）、讀資訊（`AVURLAsset`） | `Converter.swift` |
-| **VideoToolbox** | 底層的影片硬體加速框架 | **AI 補幀**（`VTFrameProcessor`）、畫面格式複製（`VTPixelTransferSession`）、HEVC 硬體編碼、打開內建的 VP9 解碼器（`VTRegisterSupplementalVideoDecoderIfAvailable`） | `Converter.swift` |
+| **VideoToolbox** | 底層的影片硬體加速框架 | **AI 補幀**（`VTFrameProcessor`）、**動作追蹤**（光流，`VTOpticalFlowConfiguration`，「動作太大時不補幀」用）、畫面格式複製與縮小（`VTPixelTransferSession`）、HEVC 硬體編碼、打開內建的 VP9 解碼器（`VTRegisterSupplementalVideoDecoderIfAvailable`） | `Converter.swift`、`Motion.swift` |
 | **CoreVideo**／**CoreMedia** | 畫面記憶體與時間的基本型別 | 畫面記憶體池（`CVPixelBufferPool`、IOSurface）、精確時間（`CMTime`） | `Converter.swift` |
 | **UserDefaults** | macOS 的 App 偏好設定 | 記住使用者選的輸出資料夾 | `App.swift` |
 | **Swift Concurrency** | `async`／`await` 非同步寫法 | 讀影片資訊、整個轉檔流程、等寫入完成 | `run()`、`App.swift` |
@@ -75,7 +76,7 @@ classDiagram
     }
     class ContentView {
         拖放區、目標幀率下拉選單、輸出位置
-        進階設定（補幀方式、輸出畫質）
+        進階設定（補幀方式、輸出畫質、動作太大時不補幀）
         開始轉檔（已勾選 N 支）／取消轉檔按鈕
         全選／全不選
         工作清單（勾選框、進度、預估剩餘時間、預估大小、移除）
@@ -83,6 +84,7 @@ classDiagram
     class JobQueue {
         jobs: [Job]
         targetFPS / highQuality / outputQuality
+        skipBigMotion / motionLevel（不記住）
         outputDirectory（記在偏好設定）
         add：加入影片（等待中、預設勾選，背景讀大小資訊）
         setChecked：勾選／取消（Shift 連選一整段）
@@ -100,6 +102,7 @@ classDiagram
         status：等待中→排隊中→轉檔中→完成…
         isSelectable：等待中或已結束才能勾
         progress / remaining / output
+        skippedPairs：幾處動作太大沒補幀
     }
     class VideoBasics {
         長度、幀率、尺寸、資料量、檔案大小
@@ -109,6 +112,7 @@ classDiagram
     class JobSettings {
         targetFPS / highQuality
         outputQuality / outputDirectory
+        motionSkip（nil＝關閉）
     }
     class FPSPreset {
         fps: 60/120/144/240
@@ -119,6 +123,8 @@ classDiagram
         讀參數、顯示進度
         --fps --fast --quality
         --out-dir -o --info
+        --skip-motion --motion-threshold
+        --mark-skipped --analyze
     }
     class FrameRateConverter {
         run：轉檔，回傳輸出檔（async）
@@ -134,6 +140,24 @@ classDiagram
         outputDirectory
         maxInterpolationGap
         outputURL（命令列 -o）
+        motionThreshold（nil＝關閉）
+        markSkipped（標記版）
+    }
+    class MotionSkipLevel {
+        less / normal / more
+        少跳過／適中／多跳過
+        threshold：8／5／3（暫定）
+    }
+    class MotionAnalyzer {
+        縮小畫面（長邊 640）
+        score：Apple 光流 → 動作分數
+    }
+    class MotionReport {
+        analyze：只分析、不轉檔
+        每 0.5 秒的最大分數、CSV
+    }
+    class SkipMarker {
+        draw：四個角落畫紅色小方塊
     }
     class OutputQuality {
         high / standard / compact
@@ -149,6 +173,7 @@ classDiagram
         next：交出下一張畫面＋時間
         pump：讀一張原始畫面、排格子
         interpolate：請 AI 補幀
+        動作太大時重複前一張（選用）
     }
     FrameBoosterApp --> ContentView
     ContentView --> JobQueue
@@ -163,10 +188,15 @@ classDiagram
     ConvertOptions ..> OutputQuality
     FrameRateConverter ..> ConvertError
     FrameRateConverter *-- FrameGenerator
+    FrameGenerator o-- MotionAnalyzer : 選用
+    FrameGenerator ..> SkipMarker : 標記版
+    ConvertOptions ..> MotionSkipLevel
+    CLI_main ..> MotionReport : --analyze
+    MotionReport --> MotionAnalyzer
 ```
 
 - **畫面層**（`App.swift`、`FPSPresets.swift`、`CLI/main.swift`）只負責「收集設定、排隊、顯示進度」。
-- **核心層**（`Converter.swift`）不知道畫面長怎樣，所以視窗版和命令列版共用同一份轉檔程式。
+- **核心層**（`Converter.swift`、`Motion.swift`）不知道畫面長怎樣，所以視窗版和命令列版共用同一份轉檔程式。
 
 ---
 
@@ -234,11 +264,15 @@ flowchart TD
     Q1 -- "否" --> FIND["找出落在 [a, b) 之間的格子<br/>位置比例 =（格子時間 − a）÷（b − a）"]
     FIND --> Q2{"a、b 相隔<br/>超過 0.5 秒？"}
     Q2 -- "是（例如螢幕錄影停住）" --> HOLD["所有格子都放 a 的原圖"]
-    Q2 -- "否" --> EACH["每個格子"]
+    Q2 -- "否" --> QM{"有打開「動作太大時不補幀」<br/>而且 a→b 動作分數超過門檻？"}
+    QM -- "是" --> HOLD2["中間的格子都放 a 的原圖<br/>（標記版：加紅色小方塊）"]
+    QM -- "否" --> EACH["每個格子"]
     EACH --> Q3{"位置比例 < 0.002？"}
     Q3 -- "是" --> ORIG["放 a 的原圖"]
     Q3 -- "否" --> AI["一次交給 AI，<br/>補出所有中間格子"]
 ```
+
+「動作太大時不補幀」預設關閉；打開時才會多量一次動作分數（見[第 7 節](#動作太大時不補幀motionswift)）。
 
 **例 1：30 → 120 FPS**（剛好 4 倍）：每兩張之間有 4 格，位置比例是 0（原圖）、0.25、0.5、0.75（AI 補）。
 
@@ -288,7 +322,7 @@ flowchart LR
     VQ -. "進度（DispatchQueue.main.async）" .-> UI
 ```
 
-- `FrameGenerator` 只在 `videoQueue` 上使用，所以不需要上鎖。
+- `FrameGenerator`（以及「動作太大時不補幀」用的 `MotionAnalyzer`）只在 `videoQueue` 上使用，所以不需要上鎖。
 - 影像和聲音**同時**寫入：`AVAssetWriter` 會把兩者交錯存放，如果先寫完影像再寫聲音，寫入器可能會卡住等聲音。
 - 錯誤用 `FirstError`（有上鎖）記住第一個發生的錯誤；寫入器出錯時，聲音最多等 5 秒就放棄，避免整個程式卡死。
 
@@ -303,6 +337,23 @@ flowchart LR
 - 連續處理時用 `.sequential` 模式（引擎可以沿用上一輪算好的動作資訊）；中間有跳過時改用 `.random`。
 - 引擎對記憶體格式有要求（`sourcePixelBufferAttributes`），所以解碼出來的畫面會先用 `VTPixelTransferSession` 複製到符合要求的記憶體。
 - 新舊 SDK 的 Swift 介面略有不同（例如 `isSupported`／`processorSupported`），程式用 `#if compiler(>=6.2)` 兩邊都支援。
+
+### 動作太大時不補幀（Motion.swift）
+
+進階設定的選用功能，預設關閉。使用說明和調整方法見 [`MOTION_TUNING.md`](MOTION_TUNING.md)。
+
+- **為什麼需要**：AI 在「某個東西自己動得很猛」的地方容易猜錯，輪廓周圍出現波紋。這是 Apple 引擎的限制，引擎本身沒有可以調的參數，所以改成「先量，太猛就不讓它猜」。
+- **怎麼量**：同一套 `VTFrameProcessor`，換成 `VTOpticalFlowConfiguration`／`VTOpticalFlowParameters`（光流），在**另一個**工作階段執行。為了快，先用 `VTPixelTransferSession` 把畫面縮小到長邊 640 像素。
+- **動作分數**：
+  1. 往前光流每隔一格取樣。
+  2. x、y 各取中位數，當成「整個畫面一起移動」（手持晃動、平移），先扣掉。
+  3. 剩下的移動距離取第 99 百分位。
+  4. 換算成「畫面長邊的百分之幾」，和解析度無關。
+- **門檻**：`MotionSkipLevel` 的三段（少跳過 8／適中 5／多跳過 3）是暫定值，要用真的影片調整，修改紀錄在 `MOTION_TUNING.md`。命令列可以用 `--motion-threshold` 直接指定數字試轉。
+- **輔助工具**（命令列）：
+  - `--analyze`（`MotionReport`）：只分析、不轉檔，每 0.5 秒列出最大分數，存成 CSV。
+  - `--mark-skipped`（`SkipMarker`）：在被跳過的畫面四個角落畫紅色小方塊。直拍影片播放時會旋轉，所以四個角都畫。
+- **沒有共用光流**：補幀仍用 `usePrecomputedFlow: false`，等於動作算了兩次，但分析用的是縮小的畫面。之後若太慢，再評估把光流直接交給補幀引擎。
 
 ---
 
@@ -364,13 +415,15 @@ flowchart TD
 | 檔案 | 負責什麼 |
 |---|---|
 | `Sources/Converter.swift` | 核心。`FrameRateConverter` 負責整個轉檔流程；`FrameGenerator` 決定每一格放什麼畫面；`VideoInfo` 讀影片資訊；`VideoBasics` 算預估大小；`ConvertError` 區分「錯誤」和「略過」 |
+| `Sources/Motion.swift` | 「動作太大時不補幀」：`MotionSkipLevel`（三段門檻）、`MotionAnalyzer`（光流→動作分數）、`MotionReport`（分析報告、CSV）、`SkipMarker`（標記版的紅色小方塊） |
 | `Sources/App/App.swift` | 視窗版（SwiftUI）：拖放、勾選（Shift 連選、全選）、排隊、目標幀率下拉選單、輸出位置、進階設定、進度條、預估剩餘時間與大小 |
 | `Sources/App/FPSPresets.swift` | 目標幀率選項（60／120／144／240）與各自適合的裝置清單（選單文字、滑鼠停留說明） |
-| `Sources/CLI/main.swift` | 命令列版：讀參數、顯示進度、`--info` |
+| `Sources/CLI/main.swift` | 命令列版：讀參數、顯示進度、`--info`、`--analyze`（動作分析報告） |
 | `Resources/Info.plist` | App 的名稱、版本、最低系統版本（15.4）、圖示、可以接受拖放影片 |
 | `assets/AppIcon.iconset` | 圖示原始圖片，編譯時用 `iconutil` 組成 `.icns` |
 | `scripts/build.sh` | 用 `swiftc` 編譯兩個程式到 `build/`，並做本機簽章（ad-hoc）；App 先在系統暫存資料夾組裝、簽章再搬回來 |
-| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音、「正常速度播放」標記，最後印出各花幾秒；再試轉 `test/sample_vp9.mp4`，只報告 VP9 讀不讀得了（不影響安裝） |
+| `scripts/selftest.sh` | 轉換 `test/sample_30fps.mp4` 成 60、120、144 FPS（以及 120 FPS 快速），檢查畫面數、幀率、聲音、「正常速度播放」標記，最後印出各花幾秒；再試轉 `test/sample_vp9.mp4`，並試用「動作太大時不補幀」、標記版、分析報告，只報告結果（不影響安裝） |
+| `docs/MOTION_TUNING.md` | 「動作太大時不補幀」使用與調整指南、門檻修改紀錄 |
 | `scripts/docs/make_mockups.py` | 產生 README 的示意圖（`docs/images/`） |
 | `scripts/docs/make_icon.py` | 產生 App 圖示原始圖片（符合 macOS 26 的圓角方形規格） |
 | `scripts/git-hooks/` | commit／push 前的自動檢查 |
@@ -397,7 +450,7 @@ flowchart TD
 | 圖示：圓角方形內完全不透明、沒有陰影、沒有超出邊界 | macOS 26 起，系統會把不合規格的圖示（有超出圓角方形的像素、半透明的地方）放進灰色的框裡。正式做法是用 Xcode 的 Icon Composer，但擁有者沒有完整 Xcode，所以改用符合規格的 PNG 組成 `.icns` |
 | 「補幀方式」和「輸出畫質」分開 | Apple 引擎只有「品質／效能優先」一個開關，管的是補出來的畫面；檔案大小由我們自己的位元率決定。分開才說得清楚，也都收進「進階設定」讓主畫面保持簡單 |
 | 不提供 CPU／GPU／記憶體用量設定 | 解碼、補幀、壓縮大多由 Mac 的專用硬體做，Apple 的 API 沒有「用幾條執行緒、多少 GPU」這類設定；改成顯示預估剩餘時間 |
-| 只記住「輸出位置」 | 其他設定（幀率、補幀方式、畫質）每次打開都回到預設，避免忘記改過而轉出不預期的結果；輸出資料夾則是常常固定的，記住比較方便 |
+| 只記住「輸出位置」 | 其他設定（幀率、補幀方式、畫質、動作太大時不補幀）每次打開都回到預設，避免忘記改過而轉出不預期的結果；輸出資料夾則是常常固定的，記住比較方便 |
 | 已達目標幀率就「略過」 | 降幀率不是這個工具的目的，也避免不小心產生比原檔差的檔案 |
 | 一次只轉一支 | 補幀和 HEVC 編碼都很吃硬體，同時轉多支不會比較快 |
 | 安裝時一定跑自我測試 | 這個專案無法在雲端沙盒測試，用測試影片在使用者的 Mac 上確認「真的轉得出來、幀率正確」才安裝。測 144 是為了檢查非整數倍的時間格線 |
@@ -405,6 +458,10 @@ flowchart TD
 | App 在系統暫存資料夾組裝、簽章 | 專案放在開了 iCloud 同步的「桌面」或「文件」時，檔案會被加上 Finder 附加資訊，`codesign` 會拒絕簽章 |
 | 跨工作線的物件標成 `@unchecked Sendable` | AVFoundation 的讀寫物件沒有標成可跨工作線（Sendable），但程式保證每個物件只在固定的一條工作線上使用；包進 `VideoPipe`／`AudioPipe` 再交給工作線，避免大量警告 |
 | 一律標記「用原本的幀率正常播放」，不提供慢動作選項 | 這個工具的目的是讓影片看起來更順，不是做慢動作；真的想要慢動作時，iPhone「照片」仍然可以手動調速度 |
+| 「動作太大時不補幀」做成選用、預設關閉、放在進階設定 | 擁有者回饋：有些影片在快速動作的輪廓周圍出現波紋。跳過補幀會讓那幾瞬間變回 30 FPS 的感覺，也會讓轉檔變慢，不是每支影片都需要，所以由使用者決定。不記住設定，避免忘記它開著 |
+| 用光流量動作，而不是單純比較兩張畫面差多少 | 單純比較會把「整個畫面平移」也當成動作大，但 AI 很擅長處理平移；光流可以扣掉整體移動，只看「某個東西自己動得多猛」，比較接近波紋出現的情況 |
+| 跳過的地方重複前一張原始畫面，不做淡入淡出 | 兩張疊在一起淡入淡出會產生另一種重影；重複原圖最乾淨，只是那一瞬間比較不順 |
+| App 只有三段、門檻數字由命令列調整 | 主畫面保持簡單；調整門檻是偶爾才做的事，用命令列的分析報告和標記版影片，配合 `MOTION_TUNING.md` 的步驟。調整時使用者只需要提供數字和時間點，影片不用離開使用者的電腦 |
 | 不做剪接點偵測（目前） | 120 FPS 下剪接點的殘影只有約 1/40 秒；之後若有需要再加 |
 
 ---
@@ -416,6 +473,7 @@ flowchart TD
 | 1 | `Sources/App/FPSPresets.swift` | Swift 的 `struct`、`static let`、多行字串，最好懂 |
 | 2 | `Sources/CLI/main.swift` | 讀命令列參數、`async`／`await`、錯誤處理（`do`／`catch`） |
 | 3 | `Converter.swift` 的 `FrameGenerator` | 時間格線的算法、`CMTime`、怎麼呼叫 Apple 的 AI |
+| 3.5 | `Motion.swift` | 光流（動作追蹤）、讀 `CVPixelBuffer` 裡的數字、統計（中位數、百分位）、寫 CSV |
 | 4 | `Converter.swift` 的 `run()` | `AVAssetReader`／`AVAssetWriter` 讀寫影片、色彩與 HDR、影像和聲音同時寫入 |
 | 5 | `Sources/App/App.swift` | SwiftUI 畫面、`ObservableObject` 狀態管理、拖放、`@MainActor` |
 | 6 | `scripts/build.sh`、`selftest.sh`、`安裝.command` | 不用 Xcode 怎麼編譯、自動化測試、安裝腳本 |
@@ -431,6 +489,7 @@ flowchart TD
 - HDR 影片轉完是否仍是 HDR、在 iPhone 上播放是否正常
 - 聲音是否同步
 - 直拍影片方向是否正確
+- 「動作太大時不補幀」：能不能編譯與執行、Apple 光流的單位是否如預期（分析報告的分數是否合理）、轉檔會慢多少、三段門檻是否合適
 - 預估大小和實際檔案差多少（目前只量過一支 720p 影片，多約 2%）
 - 下拉選單的滑鼠停留說明（每個選項各自的說明能不能顯示）
 - 拖放、Dock 圖示拖放、「在 Finder 中顯示」

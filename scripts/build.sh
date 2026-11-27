@@ -23,7 +23,7 @@ mkdir -p build
 FLAGS=(-O -swift-version 5 -target arm64-apple-macos15.4 -sdk "$(xcrun --sdk macosx --show-sdk-path)")
 
 echo "▶ 編譯命令列版本 ..."
-xcrun swiftc "${FLAGS[@]}" Sources/Converter.swift Sources/CLI/main.swift -o build/frame-booster
+xcrun swiftc "${FLAGS[@]}" Sources/Converter.swift Sources/Motion.swift Sources/CLI/main.swift -o build/frame-booster
 
 echo "▶ 編譯視窗版本 ..."
 # App 先在系統暫存資料夾組裝、簽章，再搬回 build/。
@@ -33,7 +33,7 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/framebooster-build.XXXXXX")"
 APP_STAGE="$STAGE/FrameBooster.app"
 mkdir -p "$APP_STAGE/Contents/MacOS" "$APP_STAGE/Contents/Resources"
 cp Resources/Info.plist "$APP_STAGE/Contents/Info.plist"
-xcrun swiftc "${FLAGS[@]}" -parse-as-library Sources/Converter.swift Sources/App/*.swift \
+xcrun swiftc "${FLAGS[@]}" -parse-as-library Sources/Converter.swift Sources/Motion.swift Sources/App/*.swift \
     -o "$APP_STAGE/Contents/MacOS/FrameBooster"
 
 # 圖示：把 assets/AppIcon.iconset 裡的圖片組成 macOS 用的 .icns。失敗也不影響使用。
